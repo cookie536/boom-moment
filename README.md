@@ -1,34 +1,109 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Boom Moment
 
-## Getting Started
+**Live Demo：** [https://boom-moment.netlify.app](https://boom-moment.netlify.app)
 
-First, run the development server:
+Boom Moment 是一个放在手机上的私人灵感记录本。想到什么就先记下来，之后再放进空间，或把两条记录连成一次 Boom。
+
+打开网址就能使用，不需要注册或登录。每条记录只保存在当前浏览器里。
+
+[产品案例](docs/product-case-study.md) · [开发规格](Boom_Moment_Development_Spec_v1.md) · [GitHub](https://github.com/cookie536/boom-moment)
+
+## 它解决什么问题
+
+灵感往往出现在不适合整理的时候。如果一打开就要选分类、写标题或等同步，记录本身会被打断。换一台设备或清掉浏览器数据之后，这些内容也不会自动跟着走。
+
+Boom Moment 把「先记下」放在第一位。整理和关联都是之后的显式操作。数据留在这台浏览器里，换设备前需要自己导出备份。
+
+## 核心功能
+
+- **Moment**：用可选标题、文字和图片按顺序记录一条想法。可以拍照，也可以从相册添加。没有内容时不能保存。离开未保存的编辑会先确认。
+- **Space**：用可嵌套的空间收纳 Moment。一条 Moment 只属于一个空间，也可以留在未分类。把已有记录放进空间是移动，正文、图片、创建时间和 Boom 连接都会保留。
+- **Boom**：在同一页选出两条不同的 Moment，对照标题、正文和图片。可以只建立连接，也可以建立连接并写一条新的 Moment。已有连接可以打开或取消。不能自己连自己，也不能重复连接。
+- **搜索**：按标题和正文查找。
+- **分享**：把一条 Moment 导出成白底黑字的图片。系统支持分享文件时走系统分享，否则下载图片。
+- **备份与恢复**：把 Moment、空间、Boom 连接和图片导出成 ZIP。恢复前先看数量，可以选择合并，或经过两次确认后替换当前浏览器里的数据。
+
+## 典型使用场景
+
+- 走路或读书时先记下一句想法和一张照片，回家后再决定放进哪个空间。
+- 把「阅读」和里面的「草稿」分成两层，未分类的记录可以一次移入当前空间。
+- 两条旧记录放在一起看，如果碰撞出新想法，就写成第三条 Moment，并让它连向原来的两条。
+- 换浏览器或清数据之前，从设置页导出 ZIP，之后再合并回来。
+
+## 产品原则和关键取舍
+
+- 移动端优先，中文界面，白底、黑字、细边框。主要点击区域不小于 44px。
+- 记录优先。v1 不在主流程里自动整理、生成碰撞结果或要求分类。
+- 一条 Moment 最多属于一个空间。跨空间放入时明确写成「移动」，避免用户以为留下了副本。
+- Boom 只保存用户确认的连接。取消新建时不留下半成品连接。两条来源之间不会因为新建了第三条而自动连上。
+- 删除空间时，子空间和 Moment 回到上一层或未分类，不删除正文、图片和连接。取消 Boom 连接时，两条 Moment 都留下。
+- 不设账号和云同步。代价是换设备不会自动带走数据，所以设置页直接提示定期导出备份。
+
+## 技术栈和数据存储
+
+- Next.js 15（App Router）、React 19、TypeScript、Tailwind CSS v4
+- 浏览器 IndexedDB（库名 `boom-moment`）保存 Moment、Space、Boom 连接和图片原文件
+- ZIP 备份使用 fflate，在浏览器内完成打包和校验
+- 分享图片在浏览器内绘制
+- 线上版本部署在 [Netlify](https://boom-moment.netlify.app)
+
+用户内容不上传到应用服务器。已具备名称、图标和 Web App Manifest，iPhone 可通过 Safari 的「分享 → 添加到主屏幕」打开。目前没有 Service Worker，不能离线使用。
+
+## 产品界面
+
+仓库里目前没有产品界面截图，只有主屏幕图标，因此这里不放图。需要用 [线上 Demo](https://boom-moment.netlify.app) 的真实画面补充，建议放在 `docs/screenshots/`：
+
+| 建议文件名 | 画面 |
+| --- | --- |
+| `01-home.png` | 首页卡片视图，能看到几条 Moment |
+| `02-editor.png` | 新建或编辑，包含文字和图片 |
+| `03-detail.png` | Moment 详情，能看到正文、图片和关联 |
+| `04-search.png` | 搜索及结果 |
+| `05-space.png` | 某个空间内的子空间和 Moment |
+| `06-add-existing.png` | 「添加已有 Moment」，能看清「这是移动，不是复制」 |
+| `07-boom-pick.png` | Boom 选择页，两条已勾选，出现「开始 Boom」 |
+| `08-boom-compare.png` | 对照页，两条内容同时可见 |
+| `09-settings.png` | 设置页，能看到本地保存提示和备份入口 |
+
+这些截图需要手机宽度的真实界面。补上文件后，可以把图片插进本节。
+
+## 本地运行
+
+需要 Node.js。
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+开发服务器默认地址是 `http://localhost:3000`。数据写在这个浏览器的 IndexedDB 里，和线上 Demo 不是同一份。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+运行已上线的功能不需要 API Key。
 
-To learn more about Next.js, take a look at the following resources:
+## 我的角色
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+独立完成产品策划、需求定义、交互设计、AI 辅助开发、测试验收与上线部署。
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 已知限制
 
-## Deploy on Vercel
+- 数据只在当前浏览器。换设备、换浏览器或清除网站数据后不会自动保留，需要先导出 ZIP。
+- Safari 无痕模式可能拒绝 IndexedDB。
+- 没有账号、云同步、暗色模式和协作。
+- 没有 Service Worker。添加到主屏幕后，断网不能继续使用。
+- 移动 Moment 会更新「更新时间」，创建时间不变。
+- 单张图片最大 8MB，格式为 JPEG、PNG、WebP 或 GIF。备份 ZIP 最大 80MB。
+- 仓库中仍保留早期的 `/library` 与 `/capture/analysis` 页面，底栏不会进入。v1 主流程不调用 AI，也不生成碰撞文案。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 后续规划
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+这些是可能的方向，还没有排期：
+
+- 更明确的备份提醒，降低清数据造成的丢失。
+- 在不强迫分类的前提下，让首页更容易回看一段时间里的记录。
+- 补上离线可用之后，再考虑主屏幕安装体验。
+- 如果以后加入 AI，只放在用户明确触发的步骤里，不自动改写已有 Moment。
