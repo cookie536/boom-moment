@@ -28,8 +28,13 @@ export function HomeScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [nextMoments, nextView] = await Promise.all([listMoments(), readHomeView()]);
+      const [nextMoments, nextView, nextSpaces] = await Promise.all([
+        listMoments(),
+        readHomeView(),
+        listSpaces(),
+      ]);
       setMoments(nextMoments);
+      setSpaces(nextSpaces);
       if (!viewChosen.current) {
         setView(nextView);
       }
@@ -115,7 +120,7 @@ export function HomeScreen() {
   }
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white md:max-w-3xl lg:max-w-5xl xl:max-w-6xl">
       <header className="px-5 pt-6">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{text.v1.appName}</h1>
@@ -173,9 +178,18 @@ export function HomeScreen() {
             </Link>
           </div>
         ) : view === "cards" ? (
-          <div className="columns-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {moments.map((moment) => (
-              <MomentCard key={moment.id} moment={moment} onMenu={setMenu} />
+              <MomentCard
+                key={moment.id}
+                moment={moment}
+                spaceName={
+                  moment.spaceId
+                    ? (spaces.find((space) => space.id === moment.spaceId)?.name ?? text.v1.unclassified)
+                    : text.v1.unclassified
+                }
+                onMenu={setMenu}
+              />
             ))}
           </div>
         ) : (

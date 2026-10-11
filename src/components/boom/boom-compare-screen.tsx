@@ -16,6 +16,7 @@ export function BoomCompareScreen() {
   const rightId = params.get("b") ?? "";
   const [moments, setMoments] = useState<[Moment | null, Moment | null] | null>(null);
   const [link, setLink] = useState<BoomLink | null>(null);
+  const [justCreated, setJustCreated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -50,6 +51,7 @@ export function BoomCompareScreen() {
     setError(null);
     try {
       setLink(await createLink(leftId, rightId));
+      setJustCreated(true);
     } catch (caught) {
       setError(
         caught instanceof BoomDuplicateLinkError
@@ -79,6 +81,7 @@ export function BoomCompareScreen() {
     try {
       await deleteLink(link.id);
       setLink(null);
+      setJustCreated(false);
     } catch {
       setError(text.v1.saveError);
     } finally {
@@ -112,11 +115,20 @@ export function BoomCompareScreen() {
 
   return (
     <CompareFrame>
-      <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-8 md:grid md:grid-cols-2 md:gap-6">
         <MomentColumn moment={moments[0]} />
         <MomentColumn moment={moments[1]} />
       </div>
-      {link ? <p className="mt-8 text-[15px] text-[#171717]">{text.v1.boomLinked}</p> : null}
+      {justCreated && link ? (
+        <div className="mt-8 rounded-[14px] border border-[#E7E2DA] bg-[#F7F4EF] px-4 py-3">
+          <p className="text-[15px] text-[#171717]">{text.v1.boomCreated}</p>
+          <Link href={`/boom#boom-${link.id}`} className="mt-1 inline-flex min-h-11 items-center text-[15px] text-[#171717] underline">
+            {text.v1.viewBoom}
+          </Link>
+        </div>
+      ) : link ? (
+        <p className="mt-8 text-[15px] text-[#171717]">{text.v1.boomLinked}</p>
+      ) : null}
       {error ? <p className="mt-4 text-[14px] text-[#171717]">{error}</p> : null}
       <div className="mt-6 flex flex-col gap-2 pb-8">
         {link ? (
@@ -153,7 +165,7 @@ export function BoomCompareScreen() {
 
 function CompareFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-[#F7F4EF] md:max-w-5xl">
       <header className="px-4 pt-4">
         <Link href="/boom" className="inline-flex min-h-11 items-center px-2 text-[16px] text-[#8A8A8E]">
           {text.back}

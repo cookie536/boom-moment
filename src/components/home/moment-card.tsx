@@ -9,9 +9,11 @@ import { useAssetUrl } from "@/components/moment/use-asset-url";
 
 export function MomentCard({
   moment,
+  spaceName,
   onMenu,
 }: {
   moment: Moment;
+  spaceName: string;
   onMenu: (moment: Moment) => void;
 }) {
   const title = displayTitle(moment);
@@ -29,10 +31,10 @@ export function MomentCard({
   }
 
   return (
-    <article className="relative mb-3 break-inside-avoid rounded-[14px] border border-[#EAEAEA] bg-white">
+    <article className="relative flex h-[210px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-[#EAEAEA] bg-white transition duration-150 active:scale-[0.98] [@media(hover:hover)]:hover:border-[#CFCFCF]">
       <Link
         href={`/moments/${moment.id}`}
-        className="block text-left"
+        className="flex min-h-0 flex-1 flex-col text-left"
         onPointerDown={() => {
           pressed.current = false;
           clearTimer();
@@ -52,23 +54,37 @@ export function MomentCard({
         }}
       >
         {imageId ? (
-          cover.url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={cover.url} alt="" className="max-h-72 w-full rounded-t-[14px] object-cover" />
-          ) : (
-            <div className="flex h-28 items-center justify-center rounded-t-[14px] bg-[#EAEAEA] text-[13px] text-[#8A8A8E]">
-              {cover.missing ? text.v1.missingImage : ""}
-            </div>
-          )
+          <div className="h-14 shrink-0 overflow-hidden bg-[#EAEAEA]">
+            {cover.url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={cover.url} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full items-center justify-center text-[12px] text-[#8A8A8E]">
+                {cover.missing ? text.v1.missingImage : ""}
+              </div>
+            )}
+          </div>
         ) : null}
-        <div className="px-3 py-3 pr-10">
-          <h2 className="text-[16px] leading-snug font-medium text-[#171717]">{title}</h2>
+        <div className="flex min-h-0 flex-1 flex-col px-3 pt-2 pb-2">
+          <h2 className="line-clamp-2 shrink-0 text-[15px] leading-5 font-medium text-[#171717] [overflow-wrap:anywhere]">
+            {title}
+          </h2>
           {preview ? (
-            <p className="mt-1 line-clamp-4 text-[14px] leading-relaxed whitespace-pre-wrap text-[#8A8A8E]">
+            <p className="mt-1 line-clamp-3 min-h-0 text-[13px] leading-[18px] text-[#8A8A8E] [overflow-wrap:anywhere]">
               {preview}
             </p>
           ) : null}
-          <p className="mt-2 text-[12px] text-[#8A8A8E]">{formatWhen(moment.updatedAt)}</p>
+          <div className="mt-auto flex shrink-0 items-end gap-1 pt-1.5">
+            <div className="min-w-0 flex-1">
+              <span className="inline-block max-w-full truncate rounded-full border border-[#EAEAEA] px-2 py-0.5 text-[11px] leading-4 text-[#171717]">
+                {spaceName}
+              </span>
+              <span className="mt-0.5 block truncate text-[11px] leading-4 text-[#8A8A8E]">
+                {formatWhen(moment.createdAt)}
+              </span>
+            </div>
+            <span className="w-8 shrink-0" aria-hidden="true" />
+          </div>
         </div>
       </Link>
       <button

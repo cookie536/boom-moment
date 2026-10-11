@@ -5,6 +5,7 @@ import { text } from "@/constants/text";
 import { moveMoment } from "@/lib/moments";
 import { displayTitle, momentMatches, previewText, type Moment, type Space } from "@/lib/model";
 import { momentsInSpace, SpaceMissingError } from "@/lib/spaces";
+import { cn } from "@/lib/utils";
 
 export function AddMomentsDialog({
   spaceId,
@@ -90,7 +91,7 @@ export function AddMomentsDialog({
             onChange={(event) => setQuery(event.target.value)}
             placeholder={text.v1.boomSearch}
             aria-label={text.v1.boomSearch}
-            className="mt-4 w-full rounded-[14px] border border-[#EAEAEA] px-4 py-3 text-[16px] outline-none"
+            className="mt-4 w-full rounded-[14px] border border-[#EAEAEA] px-4 py-3 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
           />
           <label className="mt-3 flex min-h-11 items-center gap-3 text-[15px]">
             <span className="shrink-0 text-[#8A8A8E]">{text.v1.spaces}</span>
@@ -111,26 +112,32 @@ export function AddMomentsDialog({
             </select>
           </label>
         </header>
-        <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-5">
+        <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-5 pb-3">
           {visible.length === 0 ? <p className="py-10 text-center text-[15px] text-[#8A8A8E]">{text.v1.addExistingEmpty}</p> : null}
-          {visible.map((moment) => {
-            const active = selected.includes(moment.id);
-            const preview = previewText(moment).replace(/\s+/g, " ").trim();
-            return (
-              <label key={moment.id} className="flex items-start gap-3 border-b border-[#EAEAEA] py-3">
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => toggle(moment.id)}
-                  className="mt-1 size-5 shrink-0 accent-[#171717]"
-                />
-                <span className="min-w-0">
-                  <span className="block truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</span>
-                  {preview ? <span className="mt-1 line-clamp-2 block text-[14px] text-[#8A8A8E]">{preview}</span> : null}
-                </span>
-              </label>
-            );
-          })}
+          <div className="flex flex-col gap-3">
+            {visible.map((moment) => {
+              const active = selected.includes(moment.id);
+              const preview = previewText(moment).replace(/\s+/g, " ").trim();
+              return (
+                <button
+                  key={moment.id}
+                  type="button"
+                  aria-pressed={active}
+                  disabled={busy}
+                  onClick={() => toggle(moment.id)}
+                  className={cn(
+                    "flex min-h-11 w-full min-w-0 flex-col items-start rounded-[14px] border px-3 py-3 text-left transition duration-200 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2 disabled:active:scale-100",
+                    active
+                      ? "border-[#171717] bg-[#F6F6F6]"
+                      : "border-[#EAEAEA] bg-white [@media(hover:hover)]:hover:border-[#CFCFCF]",
+                  )}
+                >
+                  <span className="block w-full truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</span>
+                  {preview ? <span className="mt-1 block w-full truncate text-[13px] text-[#8A8A8E]">{preview}</span> : null}
+                </button>
+              );
+            })}
+          </div>
           {error ? <p className="py-3 text-[14px] text-[#171717]">{error}</p> : null}
         </div>
         <div className="border-t border-[#EAEAEA] px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -138,7 +145,7 @@ export function AddMomentsDialog({
             type="button"
             onClick={() => void moveSelected()}
             disabled={busy || selected.length === 0}
-            className="min-h-11 w-full rounded-[14px] bg-[#171717] text-[15px] text-white disabled:bg-[#EAEAEA] disabled:text-[#8A8A8E]"
+            className="min-h-11 w-full rounded-[14px] bg-[#171717] text-[15px] text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2 disabled:bg-[#EAEAEA] disabled:text-[#8A8A8E]"
           >
             {text.v1.moveSelected(selected.length, spaceName)}
           </button>

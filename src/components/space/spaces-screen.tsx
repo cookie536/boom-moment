@@ -101,7 +101,7 @@ export function SpacesScreen() {
   const empty = spaces !== null && roots.length === 0 && unclassified.length === 0;
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white md:max-w-3xl lg:max-w-5xl">
       <header className="flex items-center justify-between gap-3 px-5 pt-6">
         <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{text.v1.spaces}</h1>
         <button
@@ -130,7 +130,7 @@ export function SpacesScreen() {
           </div>
         ) : null}
         {spaces && !empty ? (
-          <div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {roots.map((space) => (
               <SpaceRow
                 key={space.id}
@@ -143,8 +143,8 @@ export function SpacesScreen() {
               />
             ))}
             {unclassified.length > 0 || roots.length > 0 ? (
-              <Link href="/spaces/unclassified" className="block border-b border-[#EAEAEA] py-3">
-                <p className="text-[16px] font-medium text-[#171717]">{text.v1.unclassified}</p>
+              <Link href="/spaces/unclassified" className={rowLinkClass}>
+                <p className="truncate text-[16px] font-medium text-[#171717]">{text.v1.unclassified}</p>
                 <p className="mt-1 text-[13px] text-[#8A8A8E]">{text.v1.momentCount(unclassified.length)}</p>
               </Link>
             ) : null}
@@ -199,18 +199,24 @@ export function SpacesScreen() {
   );
 }
 
+const rowLinkClass =
+  "block min-w-0 rounded-[14px] border border-[#EAEAEA] bg-white px-3 py-3 transition duration-200 [@media(hover:hover)]:hover:border-[#CFCFCF] active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2";
+
 function SpaceRow({ space, detail, onMenu }: { space: Space; detail: string; onMenu: (space: Space) => void }) {
   return (
-    <article className="relative border-b border-[#EAEAEA]">
-      <Link href={`/spaces/${space.id}`} className="block py-3 pr-12">
+    <article className="grid min-w-0 grid-cols-[minmax(0,1fr)_2.75rem] items-center rounded-[14px] border border-[#EAEAEA] bg-white transition duration-200 [@media(hover:hover)]:hover:border-[#CFCFCF]">
+      <Link
+        href={`/spaces/${space.id}`}
+        className="block min-h-11 min-w-0 rounded-[14px] py-3 pl-3 transition duration-200 active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2"
+      >
         <h2 className="truncate text-[16px] font-medium text-[#171717]">{space.name}</h2>
-        {detail ? <p className="mt-1 text-[13px] text-[#8A8A8E]">{detail}</p> : null}
+        {detail ? <p className="mt-1 truncate text-[13px] text-[#8A8A8E]">{detail}</p> : null}
       </Link>
       <button
         type="button"
         aria-label={text.v1.more}
         onClick={() => onMenu(space)}
-        className="absolute top-1/2 right-0 flex size-11 -translate-y-1/2 items-center justify-center text-[#8A8A8E]"
+        className="flex size-11 items-center justify-center rounded-full text-[#8A8A8E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
       >
         <MoreHorizontal className="size-5" aria-hidden="true" />
       </button>

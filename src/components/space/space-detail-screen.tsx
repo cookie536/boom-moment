@@ -13,7 +13,7 @@ import { text } from "@/constants/text";
 import { StorageQuotaError } from "@/lib/db";
 import { createId } from "@/lib/id";
 import { listMoments } from "@/lib/moments";
-import { displayTitle, formatWhen, type Moment, type Space } from "@/lib/model";
+import { displayTitle, formatWhen, previewText, type Moment, type Space } from "@/lib/model";
 import {
   childSpaces,
   createSpace,
@@ -125,10 +125,13 @@ export function SpaceDetailScreen({ id }: { id: string }) {
   const parentName = space?.parentId ? spaces.find((item) => item.id === space.parentId)?.name ?? null : null;
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
-      <header className="px-4 pt-4">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white md:max-w-3xl lg:max-w-5xl">
+      <header className="px-5 pt-4">
         <div className="flex items-center justify-between">
-          <Link href={backHref} className="inline-flex min-h-11 items-center px-2 text-[16px] text-[#8A8A8E]">
+          <Link
+            href={backHref}
+            className="-ml-2 inline-flex min-h-11 items-center rounded-[14px] px-2 text-[16px] text-[#8A8A8E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
+          >
             {text.back}
           </Link>
           {space ? (
@@ -136,13 +139,13 @@ export function SpaceDetailScreen({ id }: { id: string }) {
               type="button"
               aria-label={text.v1.more}
               onClick={() => setMenu(space)}
-              className="flex size-11 items-center justify-center text-[#8A8A8E]"
+              className="flex size-11 items-center justify-center rounded-full text-[#8A8A8E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
             >
               <MoreHorizontal className="size-5" aria-hidden="true" />
             </button>
           ) : null}
         </div>
-        <h1 className="px-2 text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{title}</h1>
+        <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{title}</h1>
       </header>
       <main className="px-5 pt-4 pb-32">
         {error ? <p className="mb-4 text-[14px] text-[#171717]">{error}</p> : null}
@@ -151,37 +154,49 @@ export function SpaceDetailScreen({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => setNaming("child")}
-            className="mb-4 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717]"
+            className="mb-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2"
           >
             {text.v1.createChildSpace}
           </button>
         ) : null}
-        {children.map((child) => (
-          <Link key={child.id} href={`/spaces/${child.id}`} className="block border-b border-[#EAEAEA] py-3">
-            <p className="text-[16px] font-medium text-[#171717]">{child.name}</p>
-            <p className="mt-1 text-[13px] text-[#8A8A8E]">
-              {text.v1.spaceCounts(
-                allMoments ? momentsInSpace(allMoments, child.id).length : 0,
-                childSpaces(spaces, child.id).length,
-              )}
-            </p>
-          </Link>
-        ))}
+        {children.length > 0 ? (
+          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            {children.map((child) => (
+              <Link key={child.id} href={`/spaces/${child.id}`} className={rowLinkClass}>
+                <p className="truncate text-[16px] font-medium text-[#171717]">{child.name}</p>
+                <p className="mt-1 truncate text-[13px] text-[#8A8A8E]">
+                  {text.v1.spaceCounts(
+                    allMoments ? momentsInSpace(allMoments, child.id).length : 0,
+                    childSpaces(spaces, child.id).length,
+                  )}
+                </p>
+              </Link>
+            ))}
+          </div>
+        ) : null}
         {space ? (
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="mt-2 mb-2 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717]"
+            className="mb-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2"
           >
             {text.v1.addExisting}
           </button>
         ) : null}
-        {directMoments?.map((moment) => (
-          <Link key={moment.id} href={`/moments/${moment.id}`} className="block border-b border-[#EAEAEA] py-3">
-            <p className="truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</p>
-            <p className="mt-1 text-[12px] text-[#8A8A8E]">{formatWhen(moment.updatedAt)}</p>
-          </Link>
-        ))}
+        {directMoments && directMoments.length > 0 ? (
+          <div className="flex flex-col gap-3">
+            {directMoments.map((moment) => {
+              const preview = previewText(moment).replace(/\s+/g, " ").trim();
+              return (
+                <Link key={moment.id} href={`/moments/${moment.id}`} className={rowLinkClass}>
+                  <p className="truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</p>
+                  {preview ? <p className="mt-1 truncate text-[13px] text-[#8A8A8E]">{preview}</p> : null}
+                  <p className="mt-1 text-[12px] text-[#8A8A8E]">{formatWhen(moment.createdAt)}</p>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
         {directMoments && directMoments.length === 0 && children.length === 0 ? (
           <p className="py-16 text-center text-[15px] text-[#8A8A8E]">
             {unclassified ? text.v1.unclassifiedEmpty : text.v1.spaceInsideEmpty}
@@ -250,9 +265,12 @@ export function SpaceDetailScreen({ id }: { id: string }) {
   );
 }
 
+const rowLinkClass =
+  "block min-w-0 rounded-[14px] border border-[#EAEAEA] bg-white px-3 py-3 transition duration-200 [@media(hover:hover)]:hover:border-[#CFCFCF] active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2";
+
 function Status({ text: message, children }: { text: string; children?: ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center px-6 text-center">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center bg-white px-6 text-center md:max-w-3xl lg:max-w-5xl">
       <p className="text-[16px] text-[#171717]">{message}</p>
       {children}
       <BottomNav />
