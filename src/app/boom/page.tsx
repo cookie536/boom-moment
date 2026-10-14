@@ -4,7 +4,7 @@ import { text } from "@/constants/text";
 
 export default function BoomPage() {
   return (
-    <Suspense fallback={<p className="px-5 py-16 text-center text-[15px] text-[#8A8A8E]">{text.v1.loading}</p>}>
+    <Suspense fallback={<p className="px-5 py-16 text-center text-[15px] text-[#8A8178]">{text.v1.loading}</p>}>
       <BoomScreen />
     </Suspense>
   );

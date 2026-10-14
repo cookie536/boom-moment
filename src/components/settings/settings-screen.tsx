@@ -20,7 +20,7 @@ import {
 } from "@/lib/backup";
 import { getDatabase, StorageQuotaError } from "@/lib/db";
 
-type Counts = { moments: number; spaces: number; links: number };
+type Counts = { moments: number; spaces: number; links: number; booms: number };
 
 export function SettingsScreen() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -110,7 +110,7 @@ export function SettingsScreen() {
     if (!archive || !plan || busy) {
       return;
     }
-    const added = plan.addMoments + plan.addSpaces + plan.addLinks + plan.addAssets;
+    const added = plan.addMoments + plan.addSpaces + plan.addLinks + plan.addBooms + plan.addAssets;
     if (conflictCount(plan) > 0) {
       setConflictOpen(true);
       return;
@@ -173,8 +173,8 @@ export function SettingsScreen() {
     }
   }
 
-  const added = plan ? plan.addMoments + plan.addSpaces + plan.addLinks + plan.addAssets : 0;
-  const same = plan ? plan.sameMoments + plan.sameSpaces + plan.sameLinks + plan.sameAssets : 0;
+  const added = plan ? plan.addMoments + plan.addSpaces + plan.addLinks + plan.addBooms + plan.addAssets : 0;
+  const same = plan ? plan.sameMoments + plan.sameSpaces + plan.sameLinks + plan.sameBooms + plan.sameAssets : 0;
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
@@ -224,7 +224,8 @@ export function SettingsScreen() {
               <ul className="mt-3 flex flex-col gap-1 text-[15px] text-[#171717]">
                 <li>{archive.moments.length} 个 Moment</li>
                 <li>{archive.spaces.length} 个空间</li>
-                <li>{archive.links.length} 条 Boom 连接</li>
+                <li>{archive.links.length} 条旧连接</li>
+                <li>{archive.boomsIncluded ? `${archive.booms.length} 次 Boom` : text.v1.backupNoBooms}</li>
                 <li>{archive.assets.length} 张图片</li>
               </ul>
               <div className="mt-4 flex flex-col gap-2">
@@ -255,6 +256,7 @@ export function SettingsScreen() {
             <Stat label={text.v1.statMoments} value={counts?.moments} />
             <Stat label={text.v1.statSpaces} value={counts?.spaces} />
             <Stat label={text.v1.statLinks} value={counts?.links} />
+            <Stat label={text.v1.statBooms} value={counts?.booms} />
           </dl>
         </section>
 
@@ -345,12 +347,13 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 
 async function loadCounts(): Promise<Counts> {
   const database = await getDatabase();
-  const [moments, spaces, links] = await Promise.all([
+  const [moments, spaces, links, booms] = await Promise.all([
     database.count("moments"),
     database.count("spaces"),
     database.count("boomLinks"),
+    database.count("booms"),
   ]);
-  return { moments, spaces, links };
+  return { moments, spaces, links, booms };
 }
 
 function downloadZip(bytes: Uint8Array, name: string) {
@@ -382,6 +385,9 @@ function backupMessage(error: unknown) {
     }
     if (error.code === "integrity") {
       return text.v1.backupIntegrity;
+    }
+    if (error.code === "boomRefs") {
+      return text.v1.backupBoomRefs;
     }
     return text.v1.backupFormat;
   }

@@ -1,38 +1,47 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav } from "@/components/navigation/bottom-nav";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { text } from "@/constants/text";
-import { deleteLink, listLinks } from "@/lib/boom";
+import { deleteLink, listBooms, listLinks } from "@/lib/boom";
+import { boomHistoryTitle } from "@/lib/boom-flow";
+import { boomQuery, readBoomSelection, uniqueIds, writeBoomSelection } from "@/lib/boom-selection";
 import { getMoment, listMoments } from "@/lib/moments";
-import { displayTitle, momentMatches, previewText, type BoomLink, type Moment, type Space } from "@/lib/model";
+import { displayTitle, formatWhen, momentMatches, previewText, type Boom, type BoomLink, type Moment, type Space } from "@/lib/model";
 import { listSpaces } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 export function BoomScreen() {
   const router = useRouter();
-  const withId = useSearchParams().get("with");
+  const searchParams = useSearchParams();
   const seeded = useRef(false);
+  const [tab, setTab] = useState<"create" | "history">("create");
   const [moments, setMoments] = useState<Moment[] | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [links, setLinks] = useState<BoomLink[] | null>(null);
+  const [booms, setBooms] = useState<Boom[] | null>(null);
   const [query, setQuery] = useState("");
   const [spaceFilter, setSpaceFilter] = useState("all");
-  const [slots, setSlots] = useState<[string | null, string | null]>([null, null]);
-  const [focus, setFocus] = useState<0 | 1>(0);
-  const [armed, setArmed] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [selectedOpen, setSelectedOpen] = useState(false);
   const [highlight, setHighlight] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pendingUnlink, setPendingUnlink] = useState<string | null>(null);
 
   async function load() {
-    const [nextMoments, nextLinks, nextSpaces] = await Promise.all([listMoments(), listLinks(), listSpaces()]);
+    const [nextMoments, nextLinks, nextBooms, nextSpaces] = await Promise.all([
+      listMoments(),
+      listLinks(),
+      listBooms(),
+      listSpaces(),
+    ]);
     setMoments(nextMoments);
     setLinks(nextLinks);
+    setBooms(nextBooms);
     setSpaces(nextSpaces);
     setError(null);
   }
@@ -42,27 +51,35 @@ export function BoomScreen() {
   }, []);
 
   useEffect(() => {
-    if (seeded.current || !moments || !withId) {
+    if (seeded.current || !moments) {
       return;
     }
     seeded.current = true;
-    if (moments.some((moment) => moment.id === withId)) {
-      setSlots([withId, null]);
-      setFocus(1);
+    const known = (id: string) => moments.some((moment) => moment.id === id);
+    const fromUrl = uniqueIds(searchParams.getAll("m")).filter(known);
+    const withId = searchParams.get("with");
+    const stored = readBoomSelection().filter(known);
+    const next = fromUrl.length > 0 ? fromUrl : withId && known(withId) ? [withId] : stored;
+    setSelected(next);
+    writeBoomSelection(next);
+    if (searchParams.toString()) {
+      router.replace("/boom");
     }
-  }, [moments, withId]);
+  }, [moments, router, searchParams]);
 
   useEffect(() => {
-    if (!links) {
+    if (!links || !booms) {
       return;
     }
-    const id = window.location.hash.replace(/^#boom-/, "");
-    if (!id || !links.some((link) => link.id === id)) {
-      return;
+    const hash = window.location.hash.replace(/^#/, "");
+    const eventId = hash.startsWith("event-") ? hash.slice("event-".length) : "";
+    const linkId = hash.startsWith("boom-") ? hash.slice("boom-".length) : "";
+    if ((eventId && booms.some((boom) => boom.id === eventId)) || (linkId && links.some((link) => link.id === linkId))) {
+      setTab("history");
+      setHighlight(hash);
+      document.getElementById(hash)?.scrollIntoView({ block: "center" });
     }
-    setHighlight(id);
-    document.getElementById(`boom-${id}`)?.scrollIntoView({ block: "center" });
-  }, [links]);
+  }, [links, booms]);
 
   const visible = useMemo(() => {
     if (!moments) {
@@ -80,8 +97,11 @@ export function BoomScreen() {
     });
   }, [moments, query, spaceFilter]);
 
-  const chosen = slots.map((id) => (id ? moments?.find((moment) => moment.id === id) ?? null : null));
-  const ready = Boolean(chosen[0] && chosen[1]);
+  const chosen = selected.flatMap((id) => {
+    const moment = moments?.find((item) => item.id === id);
+    return moment ? [moment] : [];
+  });
+  const ready = selected.length >= 2;
 
   function spaceName(moment: Moment) {
     if (!moment.spaceId) {
@@ -90,60 +110,20 @@ export function BoomScreen() {
     return spaces.find((space) => space.id === moment.spaceId)?.name ?? text.v1.unclassified;
   }
 
-  function pick(id: string) {
+  function toggle(id: string) {
     setError(null);
-    const occupied = slots[0] === id ? 0 : slots[1] === id ? 1 : null;
-    if (occupied !== null) {
-      const next: [string | null, string | null] = [slots[0], slots[1]];
-      next[occupied] = null;
-      setSlots(next);
-      setFocus(occupied);
-      setArmed(false);
-      return;
-    }
-    let target: 0 | 1 | null = null;
-    if (armed) {
-      target = focus;
-    } else if (!slots[0]) {
-      target = 0;
-    } else if (!slots[1]) {
-      target = 1;
-    }
-    if (target === null) {
-      return;
-    }
-    const next: [string | null, string | null] = [slots[0], slots[1]];
-    next[target] = id;
-    setSlots(next);
-    setArmed(false);
-    if (!next[0]) {
-      setFocus(0);
-    } else if (!next[1]) {
-      setFocus(1);
-    } else {
-      setFocus(target);
-    }
-  }
-
-  function clearSlot(index: 0 | 1) {
-    setError(null);
-    setSlots((current) => {
-      const next: [string | null, string | null] = [current[0], current[1]];
-      next[index] = null;
+    setSelected((current) => {
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      writeBoomSelection(next);
       return next;
     });
-    setFocus(index);
   }
 
   function startBoom() {
-    if (chosen.length !== 2) {
+    if (selected.length < 2) {
       return;
     }
-    const [left, right] = chosen;
-    if (!left || !right) {
-      return;
-    }
-    router.push(`/boom/compare?a=${encodeURIComponent(left.id)}&b=${encodeURIComponent(right.id)}`);
+    router.push(`/boom/write?${boomQuery(selected)}`);
   }
 
   async function confirmUnlink() {
@@ -161,143 +141,185 @@ export function BoomScreen() {
   }
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-[#F7F4EF] md:max-w-5xl">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-[#F7F4EF] md:max-w-3xl">
       <header className="px-5 pt-6">
-        <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{text.v1.boom}</h1>
-        <p className="mt-2 text-[14px] text-[#8A8A8E]">{text.v1.boomPick}</p>
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          {([0, 1] as const).map((index) => (
-            <IdeaSlot
-              key={index}
-              index={index}
-              moment={chosen[index]}
-              spaceLabel={chosen[index] ? spaceName(chosen[index]) : ""}
-              focused={focus === index}
-              onFocus={() => {
-                setFocus(index);
-                setArmed(true);
-              }}
-              onClear={() => clearSlot(index)}
-            />
-          ))}
-        </div>
-        {ready ? (
+        <h1 className="text-center text-[22px] font-semibold text-[#2C2825]">{text.v1.boom}</h1>
+        <div className="mt-3 grid grid-cols-2 border-b border-[#E7E0D6]" role="tablist" aria-label={text.v1.boom}>
           <button
             type="button"
-            onClick={startBoom}
-            className="mt-4 hidden min-h-11 w-full rounded-[14px] bg-[#171717] text-[15px] text-white transition-colors duration-200 md:block"
+            role="tab"
+            aria-selected={tab === "create"}
+            onClick={() => setTab("create")}
+            className={cn(
+              "min-h-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]",
+              tab === "create" ? "border-b-2 border-[#8C7358] font-semibold text-[#2C2825]" : "text-[#8A8178]",
+            )}
           >
-            {text.v1.boomStart}
+            {text.v1.boomCreateTab}
           </button>
-        ) : null}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "history"}
+            onClick={() => setTab("history")}
+            className={cn(
+              "min-h-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]",
+              tab === "history" ? "border-b-2 border-[#8C7358] font-semibold text-[#2C2825]" : "text-[#8A8178]",
+            )}
+          >
+            {text.v1.boomHistoryTab}
+          </button>
+        </div>
       </header>
-      <main className={cn("px-5 pt-5", ready ? "pb-44 md:pb-32" : "pb-32")}>
-        {error ? <p className="mb-3 text-[14px] text-[#171717]">{error}</p> : null}
-        <div className="lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-start lg:gap-8">
+      <main className={cn("px-5 pt-4", tab === "create" && ready ? "pb-44" : "pb-32")}>
+        {error ? <p className="mb-3 text-[14px] text-[#2C2825]">{error}</p> : null}
+        {tab === "create" ? (
           <div>
-            <label className="flex min-h-11 items-center gap-2 rounded-[14px] border border-[#E7E2DA] bg-white px-4">
-              <Search className="size-4 text-[#8A8A8E]" aria-hidden="true" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={text.v1.boomSearch}
-                aria-label={text.v1.boomSearch}
-                className="min-w-0 flex-1 bg-transparent py-3 text-[16px] text-[#171717] outline-none placeholder:text-[#8A8A8E]"
-              />
-            </label>
-            <label className="mt-3 flex min-h-11 items-center gap-3 rounded-[14px] border border-[#E7E2DA] bg-white px-4 text-[15px] text-[#171717]">
-              <span className="shrink-0 text-[#8A8A8E]">{text.v1.spaces}</span>
-              <select
-                value={spaceFilter}
-                onChange={(event) => setSpaceFilter(event.target.value)}
-                aria-label={text.v1.spaces}
-                className="min-w-0 flex-1 bg-transparent py-2 text-[16px] outline-none"
-              >
-                <option value="all">{text.v1.boomAll}</option>
-                <option value="none">{text.v1.unclassified}</option>
-                {spaces.map((space) => (
-                  <option key={space.id} value={space.id}>
-                    {space.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="mt-4 flex flex-col gap-2">
-              {moments === null ? <p className="py-8 text-center text-[15px] text-[#8A8A8E]">{text.v1.loading}</p> : null}
+            <p className="text-[13px] text-[#8A8178]">{text.v1.boomPick}</p>
+            <div className="mt-4 flex gap-3">
+              <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 border-b border-[#E7E0D6]">
+                <Search className="size-4 shrink-0 text-[#8A8178]" aria-hidden="true" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={text.v1.boomSearch}
+                  aria-label={text.v1.boomSearch}
+                  className="min-w-0 flex-1 bg-transparent py-2 text-[16px] text-[#2C2825] outline-none placeholder:text-[#8A8178]"
+                />
+              </label>
+              <label className="flex min-h-11 shrink-0 items-center gap-1 border-b border-[#E7E0D6] text-[14px] text-[#2C2825]">
+                <span className="text-[#8A8178]">{text.v1.spaces}</span>
+                <select
+                  value={spaceFilter}
+                  onChange={(event) => setSpaceFilter(event.target.value)}
+                  aria-label={text.v1.spaces}
+                  className="max-w-28 bg-transparent py-2 outline-none"
+                >
+                  <option value="all">{text.v1.boomAll}</option>
+                  <option value="none">{text.v1.unclassified}</option>
+                  {spaces.map((space) => (
+                    <option key={space.id} value={space.id}>
+                      {space.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {selected.length > 0 ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  aria-expanded={selectedOpen}
+                  onClick={() => setSelectedOpen((open) => !open)}
+                  className="flex min-h-11 w-full items-center justify-between text-[14px] font-medium text-[#8C7358] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]"
+                >
+                  {text.v1.boomSelected(selected.length)}
+                  <ChevronDown className={cn("size-4", selectedOpen ? "rotate-180" : "")} aria-hidden="true" />
+                </button>
+                {selectedOpen ? (
+                  <ul className="mt-1 flex flex-col">
+                    {chosen.map((moment) => (
+                      <li key={moment.id} className="flex min-h-11 items-center gap-3 border-b border-[#E7E0D6]">
+                        <span className="min-w-0 flex-1 truncate text-[14px] text-[#2C2825]">{displayTitle(moment)}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggle(moment.id)}
+                          className="min-h-11 shrink-0 px-1 text-[13px] text-[#8A8178] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]"
+                        >
+                          {text.v1.ideaRemove}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="mt-4 flex flex-col">
+              {moments === null ? <p className="py-8 text-center text-[15px] text-[#8A8178]">{text.v1.loading}</p> : null}
               {moments && moments.length === 0 ? (
-                <p className="py-8 text-center text-[15px] text-[#8A8A8E]">{text.v1.boomNone}</p>
+                <p className="py-8 text-center text-[15px] text-[#6F675F]">{text.v1.boomNone}</p>
               ) : null}
               {moments && moments.length > 0 && visible.length === 0 ? (
-                <p className="py-8 text-center text-[15px] text-[#8A8A8E]">{text.v1.searchEmpty}</p>
+                <p className="py-8 text-center text-[15px] text-[#8A8178]">{text.v1.searchEmpty}</p>
               ) : null}
               {visible.map((moment) => {
-                const slot = slots[0] === moment.id ? 0 : slots[1] === moment.id ? 1 : -1;
+                const index = selected.indexOf(moment.id);
+                const pressed = index >= 0;
                 const preview = previewText(moment).replace(/\s+/g, " ").trim();
                 return (
                   <button
                     key={moment.id}
                     type="button"
-                    aria-pressed={slot >= 0}
-                    onClick={() => pick(moment.id)}
+                    aria-pressed={pressed}
+                    onClick={() => toggle(moment.id)}
                     className={cn(
-                      "flex min-h-11 w-full items-start gap-3 rounded-[14px] border px-3 py-3 text-left transition duration-200 active:scale-[0.99]",
-                      slot >= 0
-                        ? "border-[#C8B8A4] bg-[#F3EEE6]"
-                        : "border-[#E7E2DA] bg-white [@media(hover:hover)]:hover:border-[#D9D0C5]",
+                      "flex w-full items-start gap-3 border-b border-[#E7E0D6] py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2",
+                      pressed ? "bg-[#EFE8DF]" : "",
                     )}
                   >
-                    <span
-                      className={cn(
-                        "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] transition-colors duration-200",
-                        slot >= 0 ? "bg-[#8A7355] text-white" : "border border-[#E7E2DA] text-transparent",
-                      )}
-                      aria-hidden="true"
-                    >
-                      {slot === 0 ? "01" : slot === 1 ? "02" : ""}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[16px] font-medium text-[#171717] [overflow-wrap:anywhere]">
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 text-[14px] leading-[18px] font-semibold text-[#2C2825] [overflow-wrap:anywhere]">
                         {displayTitle(moment)}
                       </span>
                       {preview ? (
-                        <span className="mt-1 line-clamp-2 block text-[14px] text-[#8A8A8E] [overflow-wrap:anywhere]">
+                        <span className="mt-1 line-clamp-1 text-[12px] leading-4 text-[#6F675F] [overflow-wrap:anywhere]">
                           {preview}
                         </span>
                       ) : null}
-                      <span className="mt-1 block truncate text-[12px] text-[#8A8A8E]">{spaceName(moment)}</span>
+                      <span className="mt-1 block max-w-full truncate text-[12px] leading-4 text-[#8A8178]">
+                        {spaceName(moment)}
+                      </span>
                     </span>
+                    {pressed ? (
+                      <span className="shrink-0 text-[13px] font-semibold text-[#8C7358]">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
             </div>
           </div>
-
-          <section className="mt-10 lg:mt-0">
-            <h2 className="text-[18px] font-semibold text-[#171717]">{text.v1.boomLinks}</h2>
-            {links && links.length === 0 ? (
-              <p className="py-8 text-center text-[15px] text-[#8A8A8E]">{text.v1.boomEmpty}</p>
-            ) : null}
-            <div className="mt-3 flex flex-col gap-3">
-              {links?.map((link) => (
-                <ConnectionCard
-                  key={link.id}
-                  link={link}
-                  highlighted={highlight === link.id}
-                  onUnlink={() => setPendingUnlink(link.id)}
-                />
-              ))}
-            </div>
-          </section>
-        </div>
+        ) : (
+          <div className="flex flex-col gap-8">
+            <section>
+              <h2 className="text-[15px] font-semibold text-[#2C2825]">{text.v1.boomSavedList}</h2>
+              {booms && booms.length === 0 ? (
+                <p className="py-8 text-center text-[15px] text-[#6F675F]">{text.v1.boomEventEmpty}</p>
+              ) : null}
+              <div className="mt-2 flex flex-col">
+                {booms?.map((boom) => (
+                  <HistoryRow key={boom.id} boom={boom} moments={moments ?? []} highlighted={highlight === `event-${boom.id}`} />
+                ))}
+              </div>
+            </section>
+            <section>
+              <h2 className="text-[15px] font-semibold text-[#2C2825]">{text.v1.boomLinks}</h2>
+              {links && links.length === 0 ? (
+                <p className="py-8 text-center text-[15px] text-[#6F675F]">{text.v1.boomEmpty}</p>
+              ) : null}
+              <div className="mt-2 flex flex-col">
+                {links?.map((link) => (
+                  <ConnectionCard
+                    key={link.id}
+                    link={link}
+                    highlighted={highlight === `boom-${link.id}`}
+                    onUnlink={() => setPendingUnlink(link.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
       </main>
-      {ready ? (
-        <div className="fixed inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-30 mx-auto w-full max-w-lg px-5 md:hidden">
+      {tab === "create" && ready ? (
+        <div className="fixed inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-30 mx-auto w-full max-w-lg px-5">
           <button
             type="button"
             onClick={startBoom}
-            className="min-h-11 w-full rounded-[14px] bg-[#171717] text-[15px] text-white transition-transform duration-200 active:scale-[0.99]"
+            className="min-h-11 w-full rounded-[14px] bg-[#2C2825] text-[15px] text-[#F7F4EF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2"
           >
-            {text.v1.boomStart}
+            {text.v1.boomStart(selected.length)}
           </button>
         </div>
       ) : null}
@@ -316,49 +338,40 @@ export function BoomScreen() {
   );
 }
 
-function IdeaSlot({
-  index,
-  moment,
-  spaceLabel,
-  focused,
-  onFocus,
-  onClear,
-}: {
-  index: 0 | 1;
-  moment: Moment | null;
-  spaceLabel: string;
-  focused: boolean;
-  onFocus: () => void;
-  onClear: () => void;
-}) {
+function HistoryRow({ boom, moments, highlighted }: { boom: Boom; moments: Moment[]; highlighted: boolean }) {
+  const title = boomHistoryTitle(boom, moments);
+  const preview = boom.sourceMomentIds
+    .map((id) => {
+      const moment = moments.find((item) => item.id === id);
+      return moment ? displayTitle(moment) : "";
+    })
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <div
+    <Link
+      id={`event-${boom.id}`}
+      href={`/boom/${boom.id}`}
       className={cn(
-        "flex min-h-[124px] flex-col rounded-[14px] border bg-white p-3 transition-[border-color,transform] duration-200",
-        focused ? "border-[#8A7355]" : "border-[#E7E2DA]",
+        "block border-b py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2",
+        highlighted ? "border-[#8C7358] bg-[#EFE8DF]" : "border-[#E7E0D6]",
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] tracking-[0.04em] text-[#8A7355]">{index === 0 ? text.v1.idea01 : text.v1.idea02}</span>
-        {moment ? (
-          <button type="button" onClick={onClear} className="min-h-11 px-1 text-[13px] text-[#8A8A8E]">
-            {text.v1.ideaRemove}
-          </button>
-        ) : null}
-      </div>
-      <button type="button" onClick={onFocus} className="mt-1 flex min-h-11 flex-1 flex-col items-start text-left">
-        {moment ? (
-          <>
-            <span className="line-clamp-2 text-[15px] leading-5 font-medium text-[#171717] [overflow-wrap:anywhere]">
-              {displayTitle(moment)}
+      <span className="flex items-start gap-3">
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start justify-between gap-3">
+            <span className="line-clamp-2 text-[14px] leading-[18px] font-semibold text-[#2C2825] [overflow-wrap:anywhere]">
+              {title || text.v1.missingMoment}
             </span>
-            <span className="mt-1 block w-full truncate text-[12px] text-[#8A8A8E]">{spaceLabel}</span>
-          </>
-        ) : (
-          <span className="text-[14px] leading-5 text-[#8A8A8E]">{text.v1.ideaEmpty}</span>
-        )}
-      </button>
-    </div>
+            <span className="shrink-0 text-[12px] text-[#8A8178]">{formatWhen(boom.createdAt)}</span>
+          </span>
+          <span className="mt-1 block text-[12px] text-[#8A8178]">
+            {text.v1.boomHistoryMeta(boom.sourceMomentIds.length, Boolean(boom.resultMomentId))}
+          </span>
+          {preview ? <span className="mt-1 line-clamp-1 text-[12px] text-[#6F675F]">{preview}</span> : null}
+        </span>
+        <ChevronRight className="mt-1 size-4 shrink-0 text-[#8A8178]" aria-hidden="true" />
+      </span>
+    </Link>
   );
 }
 
@@ -385,32 +398,24 @@ function ConnectionCard({
     };
   }, [link.aId, link.bId]);
 
+  const title = ends
+    ? `${ends[0] ? displayTitle(ends[0]) : text.v1.missingMoment} ↔ ${ends[1] ? displayTitle(ends[1]) : text.v1.missingMoment}`
+    : text.v1.loading;
+
   return (
     <article
       id={`boom-${link.id}`}
-      className={cn(
-        "rounded-[14px] border bg-white p-3 transition-[border-color,background-color] duration-200",
-        highlighted ? "border-[#8A7355] bg-[#F3EEE6]" : "border-[#E7E2DA]",
-      )}
+      className={cn("border-b py-4", highlighted ? "border-[#8C7358] bg-[#EFE8DF]" : "border-[#E7E0D6]")}
     >
-      <EndLink moment={ends?.[0] ?? null} />
-      <EndLink moment={ends?.[1] ?? null} />
-      <button type="button" onClick={onUnlink} className="mt-1 min-h-11 px-1 text-[14px] text-[#8A8A8E]">
+      <p className="truncate text-[14px] font-semibold text-[#2C2825]">{title}</p>
+      <p className="mt-1 text-[12px] text-[#8A8178]">{text.v1.oldLinkNote}</p>
+      <button
+        type="button"
+        onClick={onUnlink}
+        className="mt-1 min-h-11 px-0 text-[14px] text-[#8A8178] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]"
+      >
         {text.v1.unlink}
       </button>
     </article>
-  );
-}
-
-function EndLink({ moment }: { moment: Moment | null }) {
-  if (!moment) {
-    return <p className="py-2 text-[15px] text-[#8A8A8E]">{text.v1.missingMoment}</p>;
-  }
-  const preview = previewText(moment).replace(/\s+/g, " ").trim();
-  return (
-    <Link href={`/moments/${moment.id}`} className="block py-2">
-      <p className="truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</p>
-      {preview ? <p className="mt-1 line-clamp-2 text-[14px] text-[#8A8A8E]">{preview}</p> : null}
-    </Link>
   );
 }

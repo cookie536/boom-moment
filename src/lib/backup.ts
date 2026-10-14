@@ -1,7 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { asStorageError, getDatabase } from "@/lib/db";
-import type { Asset, BoomLink, ContentBlock, Moment, Space } from "@/lib/model";
-import { IMAGE_MIME_TYPES, MAX_IMAGE_BYTES } from "@/lib/model";
+import type { Asset, Boom, BoomLink, ContentBlock, Moment, Space, SpaceIcon } from "@/lib/model";
+import { IMAGE_MIME_TYPES, MAX_IMAGE_BYTES, normalizeSourceIds, SPACE_ICON_IDS } from "@/lib/model";
 
 export const BACKUP_VERSION = 1;
 export const MAX_ZIP_BYTES = 80 * 1024 * 1024;
@@ -11,6 +11,7 @@ export const MAX_BACKUP_ENTRIES = 5000;
 const FILE_MOMENTS = "moments.json";
 const FILE_SPACES = "spaces.json";
 const FILE_LINKS = "links.json";
+const FILE_BOOMS = "booms.json";
 const FILE_MANIFEST = "manifest.json";
 
 const EXTENSIONS: Record<(typeof IMAGE_MIME_TYPES)[number], string> = {
@@ -24,7 +25,7 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 export class BackupError extends Error {
-  readonly code: "format" | "version" | "integrity" | "unsafe" | "tooLarge";
+  readonly code: "format" | "version" | "integrity" | "unsafe" | "tooLarge" | "boomRefs";
 
   constructor(code: BackupError["code"]) {
     super(code);
@@ -45,6 +46,8 @@ export type BackupArchive = {
   moments: Moment[];
   spaces: Space[];
   links: BoomLink[];
+  booms: Boom[];
+  boomsIncluded: boolean;
   assets: BackupAsset[];
 };
 
@@ -54,14 +57,17 @@ export type MergePlan = {
   addMoments: number;
   addSpaces: number;
   addLinks: number;
+  addBooms: number;
   addAssets: number;
   sameMoments: number;
   sameSpaces: number;
   sameLinks: number;
+  sameBooms: number;
   sameAssets: number;
   conflictMoments: number;
   conflictSpaces: number;
   conflictLinks: number;
+  conflictBooms: number;
   conflictAssets: number;
 };
 
@@ -75,6 +81,7 @@ type Library = {
   moments: Moment[];
   spaces: Space[];
   links: BoomLink[];
+  booms: Boom[];
   assets: BackupAsset[];
 };
 
@@ -87,7 +94,7 @@ export function backupFileName(date = new Date()) {
 
 export async function exportBackup() {
   const library = await readLibrary();
-  return encodeBackup({ ...library, exportedAt: new Date().toISOString() });
+  return encodeBackup({ ...library, boomsIncluded: true, exportedAt: new Date().toISOString() });
 }
 
 export async function encodeBackup(archive: BackupArchive) {
@@ -95,6 +102,7 @@ export async function encodeBackup(archive: BackupArchive) {
   const moments = jsonBytes(sortById(archive.moments));
   const spaces = jsonBytes(sortById(archive.spaces));
   const links = jsonBytes(sortById(archive.links));
+  const booms = jsonBytes(sortById(archive.booms.map(normalizeBoom)));
   const assetMeta = jsonBytes(
     sortById(archive.assets).map((asset) => ({
       id: asset.id,
@@ -106,12 +114,14 @@ export async function encodeBackup(archive: BackupArchive) {
     [FILE_MOMENTS]: moments,
     [FILE_SPACES]: spaces,
     [FILE_LINKS]: links,
+    [FILE_BOOMS]: booms,
     "asset-meta.json": assetMeta,
   };
   const listed: Record<string, string> = {
     [FILE_MOMENTS]: await sha256Hex(moments),
     [FILE_SPACES]: await sha256Hex(spaces),
     [FILE_LINKS]: await sha256Hex(links),
+    [FILE_BOOMS]: await sha256Hex(booms),
     "asset-meta.json": await sha256Hex(assetMeta),
   };
   for (const asset of sortById(archive.assets)) {
@@ -127,6 +137,7 @@ export async function encodeBackup(archive: BackupArchive) {
       moments: archive.moments.length,
       spaces: archive.spaces.length,
       links: archive.links.length,
+      booms: archive.booms.length,
       assets: archive.assets.length,
     },
     files: listed,
@@ -194,6 +205,8 @@ export async function parseBackup(bytes: Uint8Array): Promise<BackupArchive> {
   const moments = parseMoments(readJson(required(entries, FILE_MOMENTS)));
   const spaces = parseSpaces(readJson(required(entries, FILE_SPACES)));
   const links = parseLinks(readJson(required(entries, FILE_LINKS)));
+  const boomsIncluded = typeof hashes[FILE_BOOMS] === "string";
+  const booms = boomsIncluded ? parseBooms(readJson(required(entries, FILE_BOOMS))) : [];
   const assets = await parseAssets(entries, hashes);
   const counts = record.counts;
   if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
@@ -208,7 +221,14 @@ export async function parseBackup(bytes: Uint8Array): Promise<BackupArchive> {
   ) {
     throw new BackupError("integrity");
   }
-  const archive = { exportedAt: record.exportedAt, moments, spaces, links, assets };
+  if (boomsIncluded) {
+    if (countRecord.booms !== booms.length) {
+      throw new BackupError("integrity");
+    }
+  } else if (countRecord.booms !== undefined) {
+    throw new BackupError("integrity");
+  }
+  const archive = { exportedAt: record.exportedAt, moments, spaces, links, booms, boomsIncluded, assets };
   validateLibrary(archive);
   return archive;
 }
@@ -223,7 +243,10 @@ export async function applyMerge(archive: BackupArchive, choice: MergeChoice): P
   const local = await readLibrary();
   const ops = diffLibrary(local, archive, choice);
   const database = await getDatabase();
-  const tx = database.transaction(["moments", "spaces", "boomLinks", "assets"], "readwrite");
+  const stores = archive.boomsIncluded
+    ? (["moments", "spaces", "boomLinks", "booms", "assets"] as const)
+    : (["moments", "spaces", "boomLinks", "assets"] as const);
+  const tx = database.transaction(stores, "readwrite");
   try {
     for (const id of ops.deleteLinkIds) {
       await tx.objectStore("boomLinks").delete(id);
@@ -240,6 +263,11 @@ export async function applyMerge(archive: BackupArchive, choice: MergeChoice): P
     for (const link of ops.putLinks) {
       await tx.objectStore("boomLinks").put(link);
     }
+    if (archive.boomsIncluded) {
+      for (const boom of ops.putBooms) {
+        await tx.objectStore("booms").put(boom);
+      }
+    }
     await tx.done;
     return { added: ops.added, replaced: ops.replaced, skipped: ops.skipped };
   } catch (error) {
@@ -251,14 +279,24 @@ export async function applyMerge(archive: BackupArchive, choice: MergeChoice): P
 export async function applyReplace(archive: BackupArchive) {
   validateLibrary(archive);
   const database = await getDatabase();
-  const tx = database.transaction(["moments", "spaces", "boomLinks", "assets"], "readwrite");
+  const tx = database.transaction(["moments", "spaces", "boomLinks", "booms", "assets"], "readwrite");
   try {
-    await Promise.all([
+    if (!archive.boomsIncluded) {
+      const booms = await tx.objectStore("booms").getAll();
+      if (keptBoomsDangle(booms, archive)) {
+        throw new BackupError("boomRefs");
+      }
+    }
+    const clears = [
       tx.objectStore("moments").clear(),
       tx.objectStore("spaces").clear(),
       tx.objectStore("boomLinks").clear(),
       tx.objectStore("assets").clear(),
-    ]);
+    ];
+    if (archive.boomsIncluded) {
+      clears.push(tx.objectStore("booms").clear());
+    }
+    await Promise.all(clears);
     for (const space of archive.spaces) {
       await tx.objectStore("spaces").put(space);
     }
@@ -271,28 +309,52 @@ export async function applyReplace(archive: BackupArchive) {
     for (const link of archive.links) {
       await tx.objectStore("boomLinks").put(link);
     }
+    if (archive.boomsIncluded) {
+      for (const boom of archive.booms) {
+        await tx.objectStore("booms").put(normalizeBoom(boom));
+      }
+    }
     await tx.done;
   } catch (error) {
-    abort(tx);
+    try {
+      tx.abort();
+    } catch {
+      // The transaction already failed closed.
+    }
+    try {
+      await tx.done;
+    } catch {
+      // Abort rejects the transaction. The caller throws the original error.
+    }
     throw error instanceof BackupError ? error : asStorageError(error);
   }
 }
 
 export function conflictCount(plan: MergePlan) {
-  return plan.conflictMoments + plan.conflictSpaces + plan.conflictLinks + plan.conflictAssets;
+  return plan.conflictMoments + plan.conflictSpaces + plan.conflictLinks + plan.conflictBooms + plan.conflictAssets;
+}
+
+function keptBoomsDangle(booms: Boom[], archive: BackupArchive) {
+  const momentIds = new Set(archive.moments.map((moment) => moment.id));
+  return booms.some(
+    (boom) =>
+      boom.sourceMomentIds.some((id) => !momentIds.has(id)) ||
+      (boom.resultMomentId !== undefined && !momentIds.has(boom.resultMomentId)),
+  );
 }
 
 async function readLibrary(): Promise<Library> {
   const database = await getDatabase();
-  const tx = database.transaction(["moments", "spaces", "boomLinks", "assets"], "readonly");
+  const tx = database.transaction(["moments", "spaces", "boomLinks", "booms", "assets"], "readonly");
   return readFromTransaction(tx);
 }
 
 async function readFromTransaction(tx: AwaitedTransaction): Promise<Library> {
-  const [moments, spaces, links, stored] = await Promise.all([
+  const [moments, spaces, links, booms, stored] = await Promise.all([
     tx.objectStore("moments").getAll(),
     tx.objectStore("spaces").getAll(),
     tx.objectStore("boomLinks").getAll(),
+    tx.objectStore("booms").getAll(),
     tx.objectStore("assets").getAll(),
   ]);
   const assets: BackupAsset[] = [];
@@ -304,28 +366,34 @@ async function readFromTransaction(tx: AwaitedTransaction): Promise<Library> {
       bytes: new Uint8Array(await asset.blob.arrayBuffer()),
     });
   }
-  return { moments, spaces, links, assets };
+  return { moments, spaces, links, booms, assets };
 }
 
 type AwaitedTransaction = Awaited<ReturnType<Awaited<ReturnType<typeof getDatabase>>["transaction"]>>;
 
-function diffLibrary(local: Library, incoming: Library, choice: MergeChoice) {
+function diffLibrary(local: Library, incoming: BackupArchive, choice: MergeChoice) {
   const moments = diffRecords(local.moments, incoming.moments, sameMoment, choice);
   const spaces = diffRecords(local.spaces, incoming.spaces, sameSpace, choice);
   const assets = diffRecords(local.assets, incoming.assets, sameAsset, choice);
   const links = diffLinks(local.links, incoming.links, choice);
+  const booms = incoming.boomsIncluded
+    ? diffRecords(local.booms, incoming.booms.map(normalizeBoom), sameBoom, choice)
+    : { put: [], added: 0, replaced: 0, same: 0, conflicts: 0, skipped: 0 };
   const plan: MergePlan = {
     addMoments: moments.added,
     addSpaces: spaces.added,
     addLinks: links.added,
+    addBooms: booms.added,
     addAssets: assets.added,
     sameMoments: moments.same,
     sameSpaces: spaces.same,
     sameLinks: links.same,
+    sameBooms: booms.same,
     sameAssets: assets.same,
     conflictMoments: moments.conflicts,
     conflictSpaces: spaces.conflicts,
     conflictLinks: links.conflicts,
+    conflictBooms: booms.conflicts,
     conflictAssets: assets.conflicts,
   };
   return {
@@ -334,10 +402,11 @@ function diffLibrary(local: Library, incoming: Library, choice: MergeChoice) {
     putSpaces: spaces.put,
     putAssets: assets.put,
     putLinks: links.put,
+    putBooms: booms.put,
     deleteLinkIds: links.deleteIds,
-    added: moments.added + spaces.added + assets.added + links.added,
-    replaced: moments.replaced + spaces.replaced + assets.replaced + links.replaced,
-    skipped: moments.skipped + spaces.skipped + assets.skipped + links.skipped,
+    added: moments.added + spaces.added + assets.added + links.added + booms.added,
+    replaced: moments.replaced + spaces.replaced + assets.replaced + links.replaced + booms.replaced,
+    skipped: moments.skipped + spaces.skipped + assets.skipped + links.skipped + booms.skipped,
   };
 }
 
@@ -454,6 +523,19 @@ function sameLink(left: BoomLink, right: BoomLink) {
   return canonical(left) === canonical(right);
 }
 
+function sameBoom(left: Boom, right: Boom) {
+  return canonical(normalizeBoom(left)) === canonical(normalizeBoom(right));
+}
+
+function normalizeBoom(boom: Boom): Boom {
+  return {
+    id: boom.id,
+    sourceMomentIds: normalizeSourceIds(boom.sourceMomentIds),
+    createdAt: boom.createdAt,
+    ...(boom.resultMomentId ? { resultMomentId: boom.resultMomentId } : {}),
+  };
+}
+
 function sameAsset(left: BackupAsset, right: BackupAsset) {
   return (
     left.id === right.id &&
@@ -546,6 +628,22 @@ function validateLibrary(archive: Library) {
     }
     pairs.add(key);
   }
+  const booms = parseBooms(archive.booms);
+  const boomIds = new Set<string>();
+  for (const boom of booms) {
+    if (boomIds.has(boom.id)) {
+      throw new BackupError("integrity");
+    }
+    boomIds.add(boom.id);
+    for (const sourceId of boom.sourceMomentIds) {
+      if (!momentIds.has(sourceId)) {
+        throw new BackupError("integrity");
+      }
+    }
+    if (boom.resultMomentId && (!momentIds.has(boom.resultMomentId) || boom.sourceMomentIds.includes(boom.resultMomentId))) {
+      throw new BackupError("integrity");
+    }
+  }
 }
 
 function parseMoments(value: unknown): Moment[] {
@@ -622,12 +720,46 @@ function parseSpaces(value: unknown): Space[] {
     if (typeof space.name !== "string" || [...space.name].length < 1 || [...space.name].length > 40) {
       throw new BackupError("integrity");
     }
+    const icon = readSpaceIcon(space.icon);
     return {
       id,
       name: space.name,
       parentId: readNullableId(space.parentId),
       createdAt: readIso(space.createdAt),
       updatedAt: readIso(space.updatedAt),
+      ...(icon ? { icon } : {}),
+    };
+  });
+}
+
+function parseBooms(value: unknown): Boom[] {
+  if (!Array.isArray(value)) {
+    throw new BackupError("format");
+  }
+  const ids = new Set<string>();
+  return value.map((item) => {
+    const boom = readRecord(item);
+    const id = readId(boom.id);
+    if (ids.has(id)) {
+      throw new BackupError("integrity");
+    }
+    ids.add(id);
+    if (!Array.isArray(boom.sourceMomentIds) || boom.sourceMomentIds.length < 2) {
+      throw new BackupError("integrity");
+    }
+    const sourceMomentIds = normalizeSourceIds(boom.sourceMomentIds.map((sourceId) => readId(sourceId)));
+    if (sourceMomentIds.length !== boom.sourceMomentIds.length) {
+      throw new BackupError("integrity");
+    }
+    const resultMomentId = boom.resultMomentId === undefined ? undefined : readId(boom.resultMomentId);
+    if (resultMomentId && sourceMomentIds.includes(resultMomentId)) {
+      throw new BackupError("integrity");
+    }
+    return {
+      id,
+      sourceMomentIds,
+      createdAt: readIso(boom.createdAt),
+      ...(resultMomentId ? { resultMomentId } : {}),
     };
   });
 }
@@ -658,7 +790,13 @@ async function parseAssets(entries: Record<string, Uint8Array>, hashes: Record<s
   const seen = new Set<string>();
   for (const name of Object.keys(hashes)) {
     if (!name.startsWith("assets/")) {
-      if (name !== FILE_MOMENTS && name !== FILE_SPACES && name !== FILE_LINKS && name !== "asset-meta.json") {
+      if (
+        name !== FILE_MOMENTS &&
+        name !== FILE_SPACES &&
+        name !== FILE_LINKS &&
+        name !== FILE_BOOMS &&
+        name !== "asset-meta.json"
+      ) {
         throw new BackupError("unsafe");
       }
       continue;
@@ -790,7 +928,14 @@ function assertSafePath(name: string) {
   ) {
     throw new BackupError("unsafe");
   }
-  if (name === FILE_MANIFEST || name === FILE_MOMENTS || name === FILE_SPACES || name === FILE_LINKS || name === "asset-meta.json") {
+  if (
+    name === FILE_MANIFEST ||
+    name === FILE_MOMENTS ||
+    name === FILE_SPACES ||
+    name === FILE_LINKS ||
+    name === FILE_BOOMS ||
+    name === "asset-meta.json"
+  ) {
     return;
   }
   if (!/^assets\/[A-Za-z0-9_-]{1,80}\.(jpg|png|webp|gif)$/.test(name)) {
@@ -863,6 +1008,13 @@ function readTitle(value: unknown) {
     throw new BackupError("integrity");
   }
   return value;
+}
+
+function readSpaceIcon(value: unknown): SpaceIcon | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return (SPACE_ICON_IDS as readonly string[]).includes(value) ? (value as SpaceIcon) : undefined;
 }
 
 function readOptionalString(value: unknown) {

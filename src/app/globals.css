@@ -121,7 +121,7 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-white text-[#171717] antialiased;
+    @apply bg-[#F7F4EF] text-[#2C2825] antialiased;
     min-height: 100dvh;
     padding-top: env(safe-area-inset-top);
     padding-right: env(safe-area-inset-right);

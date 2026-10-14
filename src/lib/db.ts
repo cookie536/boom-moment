@@ -1,8 +1,8 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Asset, BoomLink, HomeView, Moment, Space } from "@/lib/model";
+import type { Asset, Boom, BoomLink, HomeView, Moment, Space } from "@/lib/model";
 
 export const DATABASE_NAME = "boom-moment";
-const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 2;
 
 interface MetaRow {
   key: string;
@@ -24,6 +24,11 @@ export interface BoomDB extends DBSchema {
     key: string;
     value: BoomLink;
     indexes: { "by-a": string; "by-b": string };
+  };
+  booms: {
+    key: string;
+    value: Boom;
+    indexes: { "by-source": string; "by-result": string };
   };
   assets: {
     key: string;
@@ -47,20 +52,27 @@ let databasePromise: Promise<IDBPDatabase<BoomDB>> | null = null;
 export function getDatabase() {
   if (!databasePromise) {
     databasePromise = openDB<BoomDB>(DATABASE_NAME, DATABASE_VERSION, {
-      upgrade(database) {
-        const moments = database.createObjectStore("moments", { keyPath: "id" });
-        moments.createIndex("by-updated", "updatedAt");
-        moments.createIndex("by-space", "spaceId");
+      upgrade(database, oldVersion) {
+        if (oldVersion < 1) {
+          const moments = database.createObjectStore("moments", { keyPath: "id" });
+          moments.createIndex("by-updated", "updatedAt");
+          moments.createIndex("by-space", "spaceId");
 
-        const spaces = database.createObjectStore("spaces", { keyPath: "id" });
-        spaces.createIndex("by-parent", "parentId");
+          const spaces = database.createObjectStore("spaces", { keyPath: "id" });
+          spaces.createIndex("by-parent", "parentId");
 
-        const links = database.createObjectStore("boomLinks", { keyPath: "id" });
-        links.createIndex("by-a", "aId");
-        links.createIndex("by-b", "bId");
+          const links = database.createObjectStore("boomLinks", { keyPath: "id" });
+          links.createIndex("by-a", "aId");
+          links.createIndex("by-b", "bId");
 
-        database.createObjectStore("assets", { keyPath: "id" });
-        database.createObjectStore("meta", { keyPath: "key" });
+          database.createObjectStore("assets", { keyPath: "id" });
+          database.createObjectStore("meta", { keyPath: "key" });
+        }
+        if (oldVersion < 2) {
+          const booms = database.createObjectStore("booms", { keyPath: "id" });
+          booms.createIndex("by-source", "sourceMomentIds", { multiEntry: true });
+          booms.createIndex("by-result", "resultMomentId");
+        }
       },
     }).catch((error: unknown) => {
       databasePromise = null;

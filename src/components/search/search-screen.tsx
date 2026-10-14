@@ -43,34 +43,34 @@ export function SearchScreen() {
   }, [query]);
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-[#F7F4EF]">
       <header className="px-5 pt-6">
-        <label className="flex min-h-11 items-center gap-2 rounded-[14px] border border-[#EAEAEA] px-4">
-          <Search className="size-4 text-[#8A8A8E]" aria-hidden="true" />
+        <label className="flex min-h-11 items-center gap-2 border-b border-[#E7E0D6]">
+          <Search className="size-4 text-[#8A8178]" aria-hidden="true" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={text.v1.searchPlaceholder}
             aria-label={text.v1.searchPlaceholder}
-            className="min-w-0 flex-1 bg-transparent py-3 text-[16px] text-[#171717] outline-none placeholder:text-[#8A8A8E]"
+            className="min-w-0 flex-1 bg-transparent py-3 text-[16px] text-[#2C2825] outline-none placeholder:text-[#8A8178]"
           />
         </label>
       </header>
       <main className="px-5 pt-4 pb-32">
-        {error ? <p className="py-10 text-center text-[15px] text-[#8A8A8E]">{error}</p> : null}
-        {!query.trim() ? <p className="py-10 text-center text-[15px] text-[#8A8A8E]">{text.v1.searchHint}</p> : null}
+        {error ? <p className="py-10 text-center text-[15px] text-[#8A8178]">{error}</p> : null}
+        {!query.trim() ? <p className="py-10 text-center text-[15px] text-[#8A8178]">{text.v1.searchHint}</p> : null}
         {query.trim() && results?.length === 0 ? (
-          <p className="py-10 text-center text-[15px] text-[#8A8A8E]">{text.v1.searchEmpty}</p>
+          <p className="py-10 text-center text-[15px] text-[#8A8178]">{text.v1.searchEmpty}</p>
         ) : null}
         <ul>
           {results?.map((moment) => (
-            <li key={moment.id} className="border-b border-[#EAEAEA]">
+            <li key={moment.id} className="border-b border-[#E7E0D6]">
               <Link href={`/moments/${moment.id}`} className="block py-3">
-                <p className="text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</p>
+                <p className="text-[16px] font-medium text-[#2C2825]">{displayTitle(moment)}</p>
                 {previewText(moment) ? (
-                  <p className="mt-1 line-clamp-2 text-[14px] text-[#8A8A8E]">{previewText(moment)}</p>
+                  <p className="mt-1 line-clamp-2 text-[14px] text-[#8A8178]">{previewText(moment)}</p>
                 ) : null}
-                <p className="mt-1 text-[12px] text-[#8A8A8E]">{formatWhen(moment.updatedAt)}</p>
+                <p className="mt-1 text-[12px] text-[#8A8178]">{formatWhen(moment.updatedAt)}</p>
               </Link>
             </li>
           ))}

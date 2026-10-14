@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
   BackupError,
   applyMerge,
@@ -10,11 +10,11 @@ import {
   parseBackup,
   planMerge,
 } from "../src/lib/backup";
-import { createLink, listLinks } from "../src/lib/boom";
+import { createBoom, createLink, deleteBoom, listBooms, listLinks } from "../src/lib/boom";
 import { readHomeView, writeHomeView } from "../src/lib/db";
 import { momentDrawItems, paginateHeights } from "../src/lib/share-image";
 import { createMoment, getAsset, getMoment, listMoments, updateMoment } from "../src/lib/moments";
-import { createSpace, listSpaces } from "../src/lib/spaces";
+import { createSpace, getSpace, listSpaces, renameSpace } from "../src/lib/spaces";
 
 const png = Uint8Array.from(
   atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="),
@@ -77,12 +77,28 @@ async function main() {
     assets: [],
   });
   await createLink("moment-img", "moment-note");
+  const boom = await createBoom(["moment-note", "moment-img"]);
+  const duplicate = await createBoom(["moment-img", "moment-note"]);
   await writeHomeView("list");
 
   const zip = await exportBackup();
   const archive = await parseBackup(zip);
-  if (archive.moments.length !== 2 || archive.spaces.length !== 2 || archive.links.length !== 1 || archive.assets.length !== 1) {
+  if (
+    archive.moments.length !== 2 ||
+    archive.spaces.length !== 2 ||
+    archive.links.length !== 1 ||
+    archive.booms.length !== 2 ||
+    !archive.boomsIncluded ||
+    archive.assets.length !== 1
+  ) {
     throw new Error("backup did not contain the library");
+  }
+  const archivedBooms = [...archive.booms].sort((left, right) => (left.id < right.id ? -1 : 1));
+  if (
+    archivedBooms.some((item) => item.sourceMomentIds.join(",") !== "moment-img,moment-note" || item.resultMomentId) ||
+    new Set(archivedBooms.map((item) => item.id)).size !== 2
+  ) {
+    throw new Error("backup collapsed two booms with the same sources");
   }
   const archivedChild = archive.spaces.find((space) => space.id === child.id);
   if (archivedChild?.parentId !== parent.id || archive.assets[0]?.bytes.length !== png.length) {
@@ -119,9 +135,10 @@ async function main() {
     restoredBytes.some((byte, index) => byte !== png[index]) ||
     restoredChild?.parentId !== parent.id ||
     (await listLinks()).length !== 1 ||
+    (await listBooms()).length !== 2 ||
     (await readHomeView()) !== "list"
   ) {
-    throw new Error("replace did not rebuild text, image, spaces, and links");
+    throw new Error("replace did not rebuild text, image, spaces, links, and booms");
   }
 
   await updateMoment({
@@ -165,7 +182,58 @@ async function main() {
     throw new Error("backup link did not replace the same pair");
   }
 
+  const legacyEntries = unzipSync(zip);
+  delete legacyEntries["booms.json"];
+  const legacyManifest = JSON.parse(strFromU8(legacyEntries["manifest.json"])) as {
+    files: Record<string, string>;
+    counts: Record<string, number>;
+  };
+  delete legacyManifest.files["booms.json"];
+  delete legacyManifest.counts.booms;
+  legacyEntries["manifest.json"] = strToU8(JSON.stringify(legacyManifest));
+  const legacy = await parseBackup(zipSync(legacyEntries, { level: 0 }));
+  if (legacy.boomsIncluded || legacy.booms.length !== 0 || legacy.links.length !== 1) {
+    throw new Error("an old backup without booms.json was not accepted");
+  }
+  const listedButMissing = unzipSync(zip);
+  delete listedButMissing["booms.json"];
+  let droppedBoomRejected = false;
+  try {
+    await parseBackup(zipSync(listedButMissing, { level: 0 }));
+  } catch (error) {
+    droppedBoomRejected = error instanceof BackupError;
+  }
+  const boomsBeforeLegacy = (await listBooms()).length;
+  await applyMerge(legacy, "keep-local");
+  await applyReplace(legacy);
+  if (!droppedBoomRejected || (await listBooms()).length !== boomsBeforeLegacy || boomsBeforeLegacy !== 2) {
+    throw new Error("an old backup dropped or rejected the local booms");
+  }
+  await deleteBoom(boom.id);
+  await deleteBoom(duplicate.id);
+  if ((await listBooms()).length !== 0 || !(await getMoment("moment-img")) || !(await getMoment("moment-note"))) {
+    throw new Error("removing a boom deleted a moment");
+  }
+  await applyMerge(archive, "keep-local");
+  const restoredBoomIds = new Set((await listBooms()).map((item) => item.id));
+  if (!restoredBoomIds.has(boom.id) || !restoredBoomIds.has(duplicate.id)) {
+    throw new Error("merge did not restore both booms");
+  }
+
   const beforeCorrupt = (await listMoments()).length;
+  const beforeBoomTamper = (await listBooms()).length;
+  const boomTamper = unzipSync(zip);
+  const boomFile = boomTamper["booms.json"];
+  if (!boomFile) {
+    throw new Error("backup was missing booms.json");
+  }
+  boomFile[0] ^= 0xff;
+  let boomTamperRejected = false;
+  try {
+    await parseBackup(zipSync(boomTamper, { level: 0 }));
+  } catch (error) {
+    boomTamperRejected = error instanceof BackupError;
+  }
   const corruptEntries = unzipSync(zip);
   const momentsFile = corruptEntries["moments.json"];
   if (!momentsFile) {
@@ -202,6 +270,8 @@ async function main() {
       exportedAt: "2026-10-10T00:00:00.000Z",
       moments: [],
       links: [],
+      booms: [],
+      boomsIncluded: true,
       assets: [],
       spaces: [
         {
@@ -223,13 +293,173 @@ async function main() {
   } catch (error) {
     cycleRejected = error instanceof BackupError;
   }
-  if (!corruptRejected || !missingRejected || !unsafeRejected || !cycleRejected || (await listMoments()).length !== beforeCorrupt) {
+  if (
+    !boomTamperRejected ||
+    (await listBooms()).length !== beforeBoomTamper ||
+    !corruptRejected ||
+    !missingRejected ||
+    !unsafeRejected ||
+    !cycleRejected ||
+    (await listMoments()).length !== beforeCorrupt
+  ) {
     throw new Error(
       `bad backup was accepted (${String(corruptRejected)} ${String(missingRejected)} ${String(unsafeRejected)} ${String(cycleRejected)} ${(await listMoments()).length}/${beforeCorrupt})`,
     );
   }
 
+  await createMoment({
+    id: "moment-a",
+    title: "甲",
+    blocks: [{ id: "text-a", type: "text", text: "来源甲" }],
+    assets: [],
+  });
+  await createMoment({
+    id: "moment-b",
+    title: "乙",
+    blocks: [{ id: "text-b", type: "text", text: "来源乙" }],
+    assets: [],
+  });
+  await createMoment({
+    id: "moment-c",
+    title: "丙",
+    blocks: [{ id: "text-c", type: "text", text: "产出丙" }],
+    assets: [],
+    linkTo: ["moment-a", "moment-b"],
+  });
+  const keptLibrary = await exportBackup();
+  await createMoment({
+    id: "moment-local-only",
+    title: "只在本机",
+    blocks: [{ id: "text-local-only", type: "text", text: "替换后应消失" }],
+    assets: [],
+  });
+  const foreign = await encodeBackup({
+    exportedAt: "2026-10-10T00:00:00.000Z",
+    moments: [
+      {
+        id: "moment-foreign",
+        title: "外来",
+        blocks: [{ id: "text-foreign", type: "text", text: "备份里的" }],
+        spaceId: null,
+        createdAt: "2026-10-10T00:00:00.000Z",
+        updatedAt: "2026-10-10T00:00:00.000Z",
+      },
+    ],
+    spaces: [],
+    links: [],
+    booms: [],
+    boomsIncluded: true,
+    assets: [],
+  });
+  let refused = false;
+  try {
+    await applyReplace(await withoutBooms(foreign));
+  } catch (error) {
+    refused = error instanceof BackupError && error.code === "boomRefs";
+  }
+  const refusedBooms = await listBooms();
+  const resultBoom = refusedBooms.find((item) => item.resultMomentId === "moment-c");
+  if (
+    !refused ||
+    !resultBoom ||
+    resultBoom.sourceMomentIds.join(",") !== "moment-a,moment-b" ||
+    !(await getMoment("moment-a")) ||
+    !(await getMoment("moment-b")) ||
+    !(await getMoment("moment-c")) ||
+    !(await getMoment("moment-local-only")) ||
+    (await getMoment("moment-foreign"))
+  ) {
+    throw new Error("replace with an old backup left dangling boom references or changed the library");
+  }
+
+  await applyReplace(await withoutBooms(keptLibrary));
+  const keptBooms = await listBooms();
+  const keptResult = keptBooms.find((item) => item.resultMomentId === "moment-c");
+  const keptIds = new Set((await listMoments()).map((moment) => moment.id));
+  if (
+    !keptResult ||
+    keptResult.sourceMomentIds.some((id) => !keptIds.has(id)) ||
+    !keptIds.has("moment-c") ||
+    keptIds.has("moment-local-only") ||
+    keptBooms.length !== refusedBooms.length
+  ) {
+    throw new Error("replace did not keep a boom whose moments were in the old backup");
+  }
+
+  const present = await exportBackup();
+  const parsed = await parseBackup(present);
+  const missingResult = await encodeBackup({
+    ...parsed,
+    moments: parsed.moments.filter((moment) => moment.id !== "moment-c"),
+    booms: [],
+    boomsIncluded: true,
+  });
+  const beforeIds = (await listMoments()).map((moment) => moment.id).sort();
+  const beforeBoom = (await listBooms()).find((item) => item.resultMomentId === "moment-c");
+  let resultRefused = false;
+  try {
+    await applyReplace(await withoutBooms(missingResult));
+  } catch (error) {
+    resultRefused = error instanceof BackupError && error.code === "boomRefs";
+  }
+  const afterIds = (await listMoments()).map((moment) => moment.id).sort();
+  const afterBoom = (await listBooms()).find((item) => item.id === beforeBoom?.id);
+  if (
+    !resultRefused ||
+    !beforeBoom ||
+    afterIds.join(",") !== beforeIds.join(",") ||
+    !(await getMoment("moment-a")) ||
+    !(await getMoment("moment-b")) ||
+    !(await getMoment("moment-c")) ||
+    afterBoom?.resultMomentId !== "moment-c" ||
+    afterBoom.sourceMomentIds.join(",") !== "moment-a,moment-b"
+  ) {
+    throw new Error("replace was not refused when only the boom result was missing");
+  }
+
+  await renameSpace("space-root", "阅读", "book");
+  const withIcon = await parseBackup(await exportBackup());
+  const markedRoot = withIcon.spaces.find((space) => space.id === "space-root");
+  if (markedRoot?.icon !== "book" || markedRoot.name !== "阅读") {
+    throw new Error("backup dropped the chosen space icon");
+  }
+  const stripped = await parseBackup(
+    await encodeBackup({
+      ...withIcon,
+      spaces: withIcon.spaces.map((space) => {
+        const rest = { ...space };
+        delete rest.icon;
+        return rest;
+      }),
+    }),
+  );
+  if (stripped.spaces.some((space) => space.icon)) {
+    throw new Error("old backup without space icons invented one");
+  }
+  await applyReplace(stripped);
+  const plain = await getSpace("space-root");
+  if (!plain || plain.icon || plain.name !== "阅读") {
+    throw new Error("restoring an old backup changed the space or guessed an icon");
+  }
+  await applyReplace(withIcon);
+  if ((await getSpace("space-root"))?.icon !== "book") {
+    throw new Error("restoring a backup lost the space icon");
+  }
+
   console.log("backup checks passed");
+}
+
+async function withoutBooms(bytes: Uint8Array) {
+  const entries = unzipSync(bytes);
+  delete entries["booms.json"];
+  const manifest = JSON.parse(strFromU8(entries["manifest.json"])) as {
+    files: Record<string, string>;
+    counts: Record<string, number>;
+  };
+  delete manifest.files["booms.json"];
+  delete manifest.counts.booms;
+  entries["manifest.json"] = strToU8(JSON.stringify(manifest));
+  return parseBackup(zipSync(entries, { level: 0 }));
 }
 
 void main();

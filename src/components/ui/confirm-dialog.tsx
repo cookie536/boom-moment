@@ -38,18 +38,18 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
-        className="w-full max-w-sm rounded-[14px] bg-white p-5"
+        className="w-full max-w-sm rounded-[14px] bg-[#FBF8F4] p-5"
       >
-        <h2 id="confirm-title" className="text-[18px] font-semibold text-[#171717]">
+        <h2 id="confirm-title" className="text-[18px] font-semibold text-[#2C2825]">
           {title}
         </h2>
-        <p className="mt-2 text-[15px] leading-relaxed text-[#8A8A8E]">{body}</p>
+        <p className="mt-2 text-[15px] leading-relaxed text-[#6F675F]">{body}</p>
         <div className="mt-5 flex gap-3">
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="min-h-11 flex-1 rounded-[14px] border border-[#EAEAEA] text-[15px] text-[#171717]"
+            className="min-h-11 flex-1 rounded-[14px] border border-[#E7E0D6] text-[15px] text-[#2C2825]"
           >
             {cancelLabel}
           </button>
@@ -58,8 +58,8 @@ export function ConfirmDialog({
             onClick={onConfirm}
             className={
               danger
-                ? "min-h-11 flex-1 rounded-[14px] bg-[#171717] text-[15px] text-white"
-                : "min-h-11 flex-1 rounded-[14px] bg-[#171717] text-[15px] text-white"
+                ? "min-h-11 flex-1 rounded-[14px] bg-[#2C2825] text-[15px] text-[#F7F4EF]"
+                : "min-h-11 flex-1 rounded-[14px] bg-[#2C2825] text-[15px] text-[#F7F4EF]"
             }
           >
             {confirmLabel}

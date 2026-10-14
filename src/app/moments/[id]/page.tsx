@@ -1,9 +1,9 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { MomentDetail } from "@/components/moment/moment-detail";
+import { ReadingLayer } from "@/components/moment/reading-layer";
 
 export default function MomentPage() {
   const params = useParams<{ id: string }>();
-  return <MomentDetail id={params.id} />;
+  return <ReadingLayer id={params.id} />;
 }

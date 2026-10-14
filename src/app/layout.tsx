@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
+import { ReadingHost } from "@/components/moment/reading-host";
 import "./globals.css";
 
 const geist = Geist({
@@ -29,7 +30,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#ffffff",
+  themeColor: "#F7F4EF",
 };
 
 export default function RootLayout({
@@ -42,7 +43,10 @@ export default function RootLayout({
       <head>
         <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <ReadingHost />
+      </body>
     </html>
   );
 }

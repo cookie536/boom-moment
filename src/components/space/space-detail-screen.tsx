@@ -7,13 +7,13 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { BottomNav } from "@/components/navigation/bottom-nav";
 import { AddMomentsDialog } from "@/components/space/add-moments-dialog";
 import { NameDialog } from "@/components/space/name-dialog";
+import { SpaceBadge } from "@/components/space/space-badge";
 import { SpaceParentDialog } from "@/components/space/space-parent-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { text } from "@/constants/text";
-import { StorageQuotaError } from "@/lib/db";
 import { createId } from "@/lib/id";
 import { listMoments } from "@/lib/moments";
-import { displayTitle, formatWhen, previewText, type Moment, type Space } from "@/lib/model";
+import { displayTitle, formatWhen, previewText, resolveSpaceIcon, type Moment, type Space, type SpaceIcon } from "@/lib/model";
 import {
   childSpaces,
   createSpace,
@@ -25,6 +25,7 @@ import {
   renameSpace,
   SpaceCycleError,
 } from "@/lib/spaces";
+import { queueToast, showToast } from "@/lib/toast";
 
 export function SpaceDetailScreen({ id }: { id: string }) {
   const router = useRouter();
@@ -36,6 +37,7 @@ export function SpaceDetailScreen({ id }: { id: string }) {
   const [menu, setMenu] = useState<Space | null>(null);
   const [naming, setNaming] = useState<"child" | "rename" | null>(null);
   const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [adding, setAdding] = useState(false);
 
@@ -59,35 +61,36 @@ export function SpaceDetailScreen({ id }: { id: string }) {
     void load();
   }, [load]);
 
-  async function confirmName(name: string) {
+  async function confirmName(name: string, icon: SpaceIcon) {
     const mode = naming;
-    setNaming(null);
-    try {
-      if (mode === "child") {
-        await createSpace({ id: createId(), name, parentId: id });
-      } else if (mode === "rename" && space) {
-        await renameSpace(space.id, name);
-      }
-      await load();
-    } catch (caught) {
-      setError(caught instanceof StorageQuotaError ? text.v1.quota : text.v1.saveError);
+    if (mode === "child") {
+      await createSpace({ id: createId(), name, parentId: id, icon });
+    } else if (mode === "rename" && space) {
+      await renameSpace(space.id, name, icon);
+    } else {
+      return;
     }
+    setNaming(null);
+    showToast(text.v1.saved);
+    await load();
   }
 
   async function confirmMove(parentId: string | null) {
-    setMoving(false);
     if (!space) {
+      return;
+    }
+    if (parentId === space.parentId) {
+      setMoving(false);
       return;
     }
     try {
       const next = await moveSpace(space.id, parentId);
-      if (next.parentId) {
-        router.push(`/spaces/${next.parentId}`);
-        return;
-      }
-      router.push("/spaces");
+      setMoving(false);
+      setMoveError(null);
+      queueToast(text.v1.moved);
+      router.push(next.parentId ? `/spaces/${next.parentId}` : "/spaces");
     } catch (caught) {
-      setError(caught instanceof SpaceCycleError ? text.v1.cycle : text.v1.saveError);
+      setMoveError(caught instanceof SpaceCycleError ? text.v1.cycle : text.v1.saveError);
     }
   }
 
@@ -125,12 +128,12 @@ export function SpaceDetailScreen({ id }: { id: string }) {
   const parentName = space?.parentId ? spaces.find((item) => item.id === space.parentId)?.name ?? null : null;
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-lg bg-white md:max-w-3xl lg:max-w-5xl">
+    <div className="mx-auto min-h-dvh w-full max-w-lg bg-[#F7F4EF] md:max-w-3xl lg:max-w-5xl">
       <header className="px-5 pt-4">
         <div className="flex items-center justify-between">
           <Link
             href={backHref}
-            className="-ml-2 inline-flex min-h-11 items-center rounded-[14px] px-2 text-[16px] text-[#8A8A8E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
+            className="-ml-2 inline-flex min-h-11 items-center rounded-[14px] px-2 text-[16px] text-[#8A8178] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]"
           >
             {text.back}
           </Link>
@@ -139,37 +142,43 @@ export function SpaceDetailScreen({ id }: { id: string }) {
               type="button"
               aria-label={text.v1.more}
               onClick={() => setMenu(space)}
-              className="flex size-11 items-center justify-center rounded-full text-[#8A8A8E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717]"
+              className="flex size-11 items-center justify-center rounded-full text-[#8A8178] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358]"
             >
               <MoreHorizontal className="size-5" aria-hidden="true" />
             </button>
           ) : null}
         </div>
-        <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{title}</h1>
+        <div className="mt-3 flex items-center gap-3">
+          <SpaceBadge icon={space?.icon} />
+          <h1 className="min-w-0 truncate text-[28px] font-semibold tracking-[-0.03em] text-[#2C2825]">{title}</h1>
+        </div>
       </header>
-      <main className="px-5 pt-4 pb-32">
-        {error ? <p className="mb-4 text-[14px] text-[#171717]">{error}</p> : null}
-        {directMoments === null ? <p className="py-16 text-center text-[15px] text-[#8A8A8E]">{text.v1.loading}</p> : null}
+      <main className="px-5 pt-6 pb-32">
+        {error ? <p className="mb-4 text-[14px] text-[#2C2825]">{error}</p> : null}
+        {directMoments === null ? <p className="py-16 text-center text-[15px] text-[#8A8178]">{text.v1.loading}</p> : null}
         {space ? (
           <button
             type="button"
             onClick={() => setNaming("child")}
-            className="mb-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2"
+            className="mb-1 inline-flex min-h-11 items-center text-[15px] text-[#8C7358] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2"
           >
             {text.v1.createChildSpace}
           </button>
         ) : null}
         {children.length > 0 ? (
-          <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="mb-4 grid grid-cols-1 md:grid-cols-2 md:gap-x-10">
             {children.map((child) => (
-              <Link key={child.id} href={`/spaces/${child.id}`} className={rowLinkClass}>
-                <p className="truncate text-[16px] font-medium text-[#171717]">{child.name}</p>
-                <p className="mt-1 truncate text-[13px] text-[#8A8A8E]">
-                  {text.v1.spaceCounts(
-                    allMoments ? momentsInSpace(allMoments, child.id).length : 0,
-                    childSpaces(spaces, child.id).length,
-                  )}
-                </p>
+              <Link key={child.id} href={`/spaces/${child.id}`} className={spaceRowClass}>
+                <SpaceBadge icon={child.icon} />
+                <span className="min-w-0">
+                  <p className="truncate text-[16px] font-medium text-[#2C2825]">{child.name}</p>
+                  <p className="mt-1 truncate text-[13px] text-[#8A8178]">
+                    {text.v1.spaceCounts(
+                      allMoments ? momentsInSpace(allMoments, child.id).length : 0,
+                      childSpaces(spaces, child.id).length,
+                    )}
+                  </p>
+                </span>
               </Link>
             ))}
           </div>
@@ -178,27 +187,27 @@ export function SpaceDetailScreen({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="mb-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#EAEAEA] px-4 text-[15px] text-[#171717] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2"
+            className="mb-1 inline-flex min-h-11 items-center text-[15px] text-[#8C7358] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2"
           >
             {text.v1.addExisting}
           </button>
         ) : null}
         {directMoments && directMoments.length > 0 ? (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col">
             {directMoments.map((moment) => {
               const preview = previewText(moment).replace(/\s+/g, " ").trim();
               return (
                 <Link key={moment.id} href={`/moments/${moment.id}`} className={rowLinkClass}>
-                  <p className="truncate text-[16px] font-medium text-[#171717]">{displayTitle(moment)}</p>
-                  {preview ? <p className="mt-1 truncate text-[13px] text-[#8A8A8E]">{preview}</p> : null}
-                  <p className="mt-1 text-[12px] text-[#8A8A8E]">{formatWhen(moment.createdAt)}</p>
+                  <p className="truncate text-[16px] font-medium text-[#2C2825]">{displayTitle(moment)}</p>
+                  {preview ? <p className="mt-1 truncate text-[12px] text-[#6F675F]">{preview}</p> : null}
+                  <p className="mt-1 text-[12px] text-[#8A8178]">{formatWhen(moment.createdAt)}</p>
                 </Link>
               );
             })}
           </div>
         ) : null}
         {directMoments && directMoments.length === 0 && children.length === 0 ? (
-          <p className="py-16 text-center text-[15px] text-[#8A8A8E]">
+          <p className="py-16 text-center text-[15px] text-[#6F675F]">
             {unclassified ? text.v1.unclassifiedEmpty : text.v1.spaceInsideEmpty}
           </p>
         ) : null}
@@ -213,6 +222,7 @@ export function SpaceDetailScreen({ id }: { id: string }) {
           onCancel={() => setAdding(false)}
           onMoved={() => {
             setAdding(false);
+            showToast(text.v1.moved);
             void load();
           }}
           onRefresh={() => void load()}
@@ -222,19 +232,19 @@ export function SpaceDetailScreen({ id }: { id: string }) {
         <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenu(null)}>
           <div
             role="menu"
-            className="absolute inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] mx-auto max-w-sm rounded-[14px] bg-white p-2"
+            className="absolute inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] mx-auto max-w-sm rounded-[14px] bg-[#FBF8F4] p-2"
             onClick={(event) => event.stopPropagation()}
           >
             <button type="button" role="menuitem" className="flex min-h-11 w-full items-center px-3 text-left text-[16px]" onClick={() => { setNaming("rename"); setMenu(null); }}>
-              {text.v1.rename}
+              {text.v1.editSpace}
             </button>
-            <button type="button" role="menuitem" className="flex min-h-11 w-full items-center px-3 text-left text-[16px]" onClick={() => { setMoving(true); setMenu(null); }}>
+            <button type="button" role="menuitem" className="flex min-h-11 w-full items-center px-3 text-left text-[16px]" onClick={() => { setMoveError(null); setMoving(true); setMenu(null); }}>
               {text.v1.move}
             </button>
             <button type="button" role="menuitem" className="flex min-h-11 w-full items-center px-3 text-left text-[16px]" onClick={() => { setPendingDelete(true); setMenu(null); }}>
               {text.v1.delete}
             </button>
-            <button type="button" className="flex min-h-11 w-full items-center px-3 text-left text-[16px] text-[#8A8A8E]" onClick={() => setMenu(null)}>
+            <button type="button" className="flex min-h-11 w-full items-center px-3 text-left text-[16px] text-[#8A8178]" onClick={() => setMenu(null)}>
               {text.v1.cancel}
             </button>
           </div>
@@ -242,14 +252,23 @@ export function SpaceDetailScreen({ id }: { id: string }) {
       ) : null}
       {naming ? (
         <NameDialog
-          title={naming === "child" ? text.v1.createChildSpace : text.v1.rename}
+          title={naming === "child" ? text.v1.createChildSpace : text.v1.editSpace}
           initial={naming === "rename" ? space?.name ?? "" : ""}
+          initialIcon={naming === "rename" ? resolveSpaceIcon(space?.icon) : undefined}
+          hint={naming === "child" ? text.v1.spaceIconCreateHint : text.v1.spaceIconEditHint}
+          confirmLabel={naming === "child" ? text.v1.createAction : text.v1.save}
           onCancel={() => setNaming(null)}
-          onConfirm={(name) => void confirmName(name)}
+          onConfirm={confirmName}
         />
       ) : null}
       {moving && space ? (
-        <SpaceParentDialog spaces={spaces} space={space} onCancel={() => setMoving(false)} onSelect={(parentId) => void confirmMove(parentId)} />
+        <SpaceParentDialog
+          spaces={spaces}
+          space={space}
+          error={moveError}
+          onCancel={() => setMoving(false)}
+          onSelect={(parentId) => void confirmMove(parentId)}
+        />
       ) : null}
       {pendingDelete && space ? (
         <ConfirmDialog
@@ -266,12 +285,15 @@ export function SpaceDetailScreen({ id }: { id: string }) {
 }
 
 const rowLinkClass =
-  "block min-w-0 rounded-[14px] border border-[#EAEAEA] bg-white px-3 py-3 transition duration-200 [@media(hover:hover)]:hover:border-[#CFCFCF] active:scale-[0.99] motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] focus-visible:ring-offset-2";
+  "block min-w-0 border-b border-[#E7E0D6] py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2 active:bg-[#EFE8DF]";
+
+const spaceRowClass =
+  "flex min-w-0 items-center gap-3 border-b border-[#E7E0D6] py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8C7358] focus-visible:ring-offset-2 active:bg-[#EFE8DF]";
 
 function Status({ text: message, children }: { text: string; children?: ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center bg-white px-6 text-center md:max-w-3xl lg:max-w-5xl">
-      <p className="text-[16px] text-[#171717]">{message}</p>
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center bg-[#F7F4EF] px-6 text-center md:max-w-3xl lg:max-w-5xl">
+      <p className="text-[16px] text-[#2C2825]">{message}</p>
       {children}
       <BottomNav />
     </div>

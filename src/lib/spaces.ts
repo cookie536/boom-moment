@@ -1,6 +1,6 @@
 import { asStorageError, getDatabase } from "@/lib/db";
-import type { Moment, Space } from "@/lib/model";
-import { sortMoments } from "@/lib/model";
+import type { Moment, Space, SpaceIcon } from "@/lib/model";
+import { resolveSpaceIcon, sortMoments } from "@/lib/model";
 
 export class SpaceMissingError extends Error {
   constructor() {
@@ -26,7 +26,12 @@ export async function getSpace(id: string) {
   return (await database.get("spaces", id)) ?? null;
 }
 
-export async function createSpace(input: { id: string; name: string; parentId?: string | null }) {
+export async function createSpace(input: {
+  id: string;
+  name: string;
+  parentId?: string | null;
+  icon?: string;
+}) {
   const name = cleanName(input.name);
   const parentId = input.parentId ?? null;
   const database = await getDatabase();
@@ -42,6 +47,7 @@ export async function createSpace(input: { id: string; name: string; parentId?: 
     id: input.id,
     name,
     parentId,
+    icon: resolveSpaceIcon(input.icon),
     createdAt: now,
     updatedAt: now,
   };
@@ -53,14 +59,19 @@ export async function createSpace(input: { id: string; name: string; parentId?: 
   return space;
 }
 
-export async function renameSpace(id: string, name: string) {
+export async function renameSpace(id: string, name: string, icon?: SpaceIcon) {
   const nextName = cleanName(name);
   const database = await getDatabase();
   const existing = await database.get("spaces", id);
   if (!existing) {
     throw new SpaceMissingError();
   }
-  const space: Space = { ...existing, name: nextName, updatedAt: new Date().toISOString() };
+  const space: Space = {
+    ...existing,
+    name: nextName,
+    updatedAt: new Date().toISOString(),
+    ...(icon ? { icon } : {}),
+  };
   try {
     await database.put("spaces", space);
   } catch (error) {

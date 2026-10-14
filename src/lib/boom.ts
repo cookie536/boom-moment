@@ -1,6 +1,6 @@
 import { asStorageError, getDatabase } from "@/lib/db";
 import { createId } from "@/lib/id";
-import type { BoomLink, Moment } from "@/lib/model";
+import { normalizeSourceIds, type Boom, type BoomLink, type Moment } from "@/lib/model";
 
 export class BoomSelfLinkError extends Error {
   constructor() {
@@ -23,6 +23,13 @@ export class BoomMissingMomentError extends Error {
   }
 }
 
+export class BoomSourceError extends Error {
+  constructor() {
+    super("need two sources");
+    this.name = "BoomSourceError";
+  }
+}
+
 export function orderedEnds(leftId: string, rightId: string) {
   if (leftId === rightId) {
     throw new BoomSelfLinkError();
@@ -30,9 +37,26 @@ export function orderedEnds(leftId: string, rightId: string) {
   return leftId < rightId ? { aId: leftId, bId: rightId } : { aId: rightId, bId: leftId };
 }
 
+export function buildBoom(sourceMomentIds: readonly string[], resultMomentId?: string, createdAt = new Date().toISOString()) {
+  const sources = normalizeSourceIds(sourceMomentIds.map((id) => id.trim()));
+  if (sources.length < 2) {
+    throw new BoomSourceError();
+  }
+  if (resultMomentId && sources.includes(resultMomentId)) {
+    throw new BoomSelfLinkError();
+  }
+  const boom: Boom = {
+    id: createId(),
+    sourceMomentIds: sources,
+    createdAt,
+    ...(resultMomentId ? { resultMomentId } : {}),
+  };
+  return boom;
+}
+
 export async function listLinks() {
   const database = await getDatabase();
-  return (await database.getAll("boomLinks")).sort(compareLinks);
+  return (await database.getAll("boomLinks")).sort(compareCreated);
 }
 
 export async function linksFor(momentId: string) {
@@ -45,7 +69,7 @@ export async function linksFor(momentId: string) {
   for (const link of [...asA, ...asB]) {
     byId.set(link.id, link);
   }
-  return [...byId.values()].sort(compareLinks);
+  return [...byId.values()].sort(compareCreated);
 }
 
 export async function relatedMoments(momentId: string) {
@@ -82,6 +106,7 @@ export async function createLink(leftId: string, rightId: string) {
     await tx.store.put(link);
     await tx.done;
   } catch (error) {
+    await settle(tx);
     if (error instanceof BoomDuplicateLinkError) {
       throw error;
     }
@@ -99,39 +124,76 @@ export async function deleteLink(id: string) {
   }
 }
 
-export async function linksForNewMoment(momentId: string, linkTo: readonly [string, string] | undefined) {
-  if (!linkTo) {
-    return [];
-  }
-  const [leftId, rightId] = linkTo;
-  if (leftId === rightId || leftId === momentId || rightId === momentId) {
-    throw new BoomSelfLinkError();
-  }
-
+export async function getBoom(id: string) {
   const database = await getDatabase();
-  const [left, right] = await Promise.all([database.get("moments", leftId), database.get("moments", rightId)]);
-  if (!left || !right) {
-    throw new BoomMissingMomentError();
-  }
-
-  const now = new Date().toISOString();
-  const links = [leftId, rightId].map((otherId) => {
-    const ends = orderedEnds(momentId, otherId);
-    return { id: createId(), aId: ends.aId, bId: ends.bId, createdAt: now } satisfies BoomLink;
-  });
-
-  for (const link of links) {
-    const existing = await database.getAllFromIndex("boomLinks", "by-a", link.aId);
-    if (existing.some((item) => item.bId === link.bId)) {
-      throw new BoomDuplicateLinkError();
-    }
-  }
-  return links;
+  return (await database.get("booms", id)) ?? null;
 }
 
-function compareLinks(a: BoomLink, b: BoomLink) {
+export async function listBooms() {
+  const database = await getDatabase();
+  return (await database.getAll("booms")).sort(compareCreated);
+}
+
+export async function boomsFor(momentId: string) {
+  const database = await getDatabase();
+  const [asSource, asResult] = await Promise.all([
+    database.getAllFromIndex("booms", "by-source", momentId),
+    database.getAllFromIndex("booms", "by-result", momentId),
+  ]);
+  const byId = new Map<string, Boom>();
+  for (const boom of [...asSource, ...asResult]) {
+    byId.set(boom.id, boom);
+  }
+  return [...byId.values()].sort(compareCreated);
+}
+
+export async function createBoom(sourceMomentIds: readonly string[]) {
+  const boom = buildBoom(sourceMomentIds);
+  const database = await getDatabase();
+  const tx = database.transaction(["moments", "booms"], "readwrite");
+  try {
+    for (const sourceId of boom.sourceMomentIds) {
+      if (!(await tx.objectStore("moments").get(sourceId))) {
+        throw new BoomMissingMomentError();
+      }
+    }
+    await tx.objectStore("booms").put(boom);
+    await tx.done;
+  } catch (error) {
+    await settle(tx);
+    if (error instanceof BoomMissingMomentError || error instanceof BoomSourceError) {
+      throw error;
+    }
+    throw asStorageError(error);
+  }
+  return boom;
+}
+
+export async function deleteBoom(id: string) {
+  const database = await getDatabase();
+  try {
+    await database.delete("booms", id);
+  } catch (error) {
+    throw asStorageError(error);
+  }
+}
+
+function compareCreated<T extends { createdAt: string; id: string }>(a: T, b: T) {
   if (a.createdAt !== b.createdAt) {
     return a.createdAt < b.createdAt ? 1 : -1;
   }
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+async function settle(tx: { abort: () => void; done: Promise<unknown> }) {
+  try {
+    tx.abort();
+  } catch {
+    // The transaction already failed closed.
+  }
+  try {
+    await tx.done;
+  } catch {
+    // Abort rejects the transaction. The caller throws the original error.
+  }
 }

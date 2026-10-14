@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { getDatabase } from "../src/lib/db";
+import { resolveSpaceIcon } from "../src/lib/model";
 import { createMoment, getAsset, getMoment } from "../src/lib/moments";
 import { moveMoment } from "../src/lib/moments";
 import {
@@ -93,6 +94,28 @@ async function main() {
   }
   if ((await listSpaces()).some((space) => space.id === root.id)) {
     throw new Error("deleted space is still stored");
+  }
+
+  const named = await createSpace({ id: "space-read", name: "阅读" });
+  if (named.icon !== "layers") {
+    throw new Error("space icon was guessed from its name");
+  }
+  const chosen = await createSpace({ id: "space-cup", name: "阅读", icon: "book" });
+  const again = await getSpace(chosen.id);
+  if (again?.icon !== "book" || again.name !== "阅读") {
+    throw new Error("chosen space icon did not persist");
+  }
+  const now = new Date().toISOString();
+  await database.put("spaces", {
+    id: "space-old",
+    name: "阅读",
+    parentId: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const old = await getSpace("space-old");
+  if (!old || old.icon !== undefined || resolveSpaceIcon(old.icon) !== "layers") {
+    throw new Error("old space without an icon did not stay compatible");
   }
 
   console.log("space checks passed");

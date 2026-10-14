@@ -1,12 +1,12 @@
 import type { IDBPTransaction } from "idb";
+import { BoomMissingMomentError, BoomSelfLinkError, BoomSourceError, boomsFor, buildBoom } from "@/lib/boom";
 import { asStorageError, getDatabase, type BoomDB } from "@/lib/db";
-import type { Asset, ContentBlock, Moment } from "@/lib/model";
+import type { Asset, Boom, ContentBlock, Moment } from "@/lib/model";
 import { momentMatches, sortMoments } from "@/lib/model";
-import { linksForNewMoment } from "@/lib/boom";
-import type { BoomLink } from "@/lib/model";
 import { SpaceMissingError } from "@/lib/spaces";
 
-type WriteTx = IDBPTransaction<BoomDB, ["moments", "assets"] | ["moments", "assets", "boomLinks"], "readwrite">;
+type WriteStores = ["moments", "assets"] | ["moments", "assets", "booms"] | ["moments", "assets", "boomLinks", "booms"];
+type WriteTx = IDBPTransaction<BoomDB, WriteStores, "readwrite">;
 
 export async function listMoments() {
   const database = await getDatabase();
@@ -38,13 +38,17 @@ export async function countLinks(momentId: string) {
   return ids.size;
 }
 
+export async function countBooms(momentId: string) {
+  return (await boomsFor(momentId)).length;
+}
+
 export async function createMoment(input: {
   id: string;
   title?: string;
   blocks: ContentBlock[];
   assets: Asset[];
   spaceId?: string | null;
-  linkTo?: readonly [string, string];
+  linkTo?: readonly string[];
 }) {
   const spaceId = input.spaceId ?? null;
   const database = await getDatabase();
@@ -62,12 +66,8 @@ export async function createMoment(input: {
     ...(input.title?.trim() ? { title: input.title.trim() } : {}),
   };
 
-  const links = await linksForNewMoment(input.id, input.linkTo);
-  if (links.length > 0) {
-    await writeMoment(database, moment, input.assets, links);
-  } else {
-    await writeMoment(database, moment, input.assets);
-  }
+  const boom = input.linkTo && input.linkTo.length > 0 ? buildBoom(input.linkTo, moment.id, now) : null;
+  await writeMoment(database, moment, input.assets, boom);
 
   return moment;
 }
@@ -76,23 +76,36 @@ async function writeMoment(
   database: Awaited<ReturnType<typeof getDatabase>>,
   moment: Moment,
   assets: Asset[],
-  links?: BoomLink[],
+  boom: Boom | null,
 ) {
-  const tx = links
-    ? database.transaction(["moments", "assets", "boomLinks"], "readwrite")
+  const tx = boom
+    ? database.transaction(["moments", "assets", "booms"], "readwrite")
     : database.transaction(["moments", "assets"], "readwrite");
   try {
+    if (boom) {
+      for (const sourceId of boom.sourceMomentIds) {
+        if (!(await tx.objectStore("moments").get(sourceId))) {
+          throw new BoomMissingMomentError();
+        }
+      }
+    }
     for (const asset of assets) {
       await tx.objectStore("assets").put(asset);
     }
     await tx.objectStore("moments").put(moment);
-    if (links) {
-      for (const link of links) {
-        await tx.objectStore("boomLinks").put(link);
-      }
+    if (boom) {
+      await tx.objectStore("booms").put(boom);
     }
     await tx.done;
   } catch (error) {
+    await settle(tx);
+    if (
+      error instanceof BoomMissingMomentError ||
+      error instanceof BoomSelfLinkError ||
+      error instanceof BoomSourceError
+    ) {
+      throw error;
+    }
     throw asStorageError(error);
   }
 }
@@ -174,7 +187,7 @@ export async function deleteMoment(id: string) {
     return;
   }
 
-  const tx = database.transaction(["moments", "assets", "boomLinks"], "readwrite");
+  const tx = database.transaction(["moments", "assets", "boomLinks", "booms"], "readwrite");
   try {
     const [asA, asB] = await Promise.all([
       tx.objectStore("boomLinks").index("by-a").getAll(id),
@@ -183,6 +196,7 @@ export async function deleteMoment(id: string) {
     for (const link of [...asA, ...asB]) {
       await tx.objectStore("boomLinks").delete(link.id);
     }
+    await detachFromBooms(tx, id);
     await tx.objectStore("moments").delete(id);
     const imageIds = existing.blocks
       .filter((block) => block.type === "image")
@@ -195,7 +209,51 @@ export async function deleteMoment(id: string) {
     }
     await tx.done;
   } catch (error) {
+    await settle(tx);
     throw asStorageError(error);
+  }
+}
+
+async function detachFromBooms(
+  tx: IDBPTransaction<BoomDB, ["moments", "assets", "boomLinks", "booms"], "readwrite">,
+  momentId: string,
+) {
+  const boomStore = tx.objectStore("booms");
+  const [asSource, asResult] = await Promise.all([
+    boomStore.index("by-source").getAll(momentId),
+    boomStore.index("by-result").getAll(momentId),
+  ]);
+  const byId = new Map<string, Boom>();
+  for (const boom of [...asSource, ...asResult]) {
+    byId.set(boom.id, boom);
+  }
+  for (const boom of byId.values()) {
+    const sourceMomentIds = boom.sourceMomentIds.filter((sourceId) => sourceId !== momentId);
+    const resultMomentId = boom.resultMomentId === momentId ? undefined : boom.resultMomentId;
+    if (sourceMomentIds.length < 2) {
+      await boomStore.delete(boom.id);
+      continue;
+    }
+    const next: Boom = {
+      id: boom.id,
+      sourceMomentIds,
+      createdAt: boom.createdAt,
+      ...(resultMomentId ? { resultMomentId } : {}),
+    };
+    await boomStore.put(next);
+  }
+}
+
+async function settle(tx: { abort: () => void; done: Promise<unknown> }) {
+  try {
+    tx.abort();
+  } catch {
+    // The transaction already failed closed.
+  }
+  try {
+    await tx.done;
+  } catch {
+    // Abort rejects the transaction. The caller throws the original error.
   }
 }
 

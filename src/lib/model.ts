@@ -13,10 +13,21 @@ export type Moment = {
   updatedAt: string;
 };
 
+export const SPACE_ICON_IDS = ["layers", "book", "coffee", "sparkles", "map", "leaf", "music"] as const;
+
+export type SpaceIcon = (typeof SPACE_ICON_IDS)[number];
+
+export const DEFAULT_SPACE_ICON: SpaceIcon = "layers";
+
+export function resolveSpaceIcon(icon: string | undefined): SpaceIcon {
+  return (SPACE_ICON_IDS as readonly string[]).includes(icon ?? "") ? (icon as SpaceIcon) : DEFAULT_SPACE_ICON;
+}
+
 export type Space = {
   id: Id;
   name: string;
   parentId: Id | null;
+  icon?: SpaceIcon;
   createdAt: string;
   updatedAt: string;
 };
@@ -27,6 +38,17 @@ export type BoomLink = {
   bId: Id;
   createdAt: string;
 };
+
+export type Boom = {
+  id: Id;
+  sourceMomentIds: Id[];
+  resultMomentId?: Id;
+  createdAt: string;
+};
+
+export function normalizeSourceIds(ids: readonly string[]) {
+  return [...new Set(ids.filter(Boolean))].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
 
 export type Asset = {
   id: Id;
